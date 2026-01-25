@@ -1,0 +1,42 @@
+{
+  "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+  "@aws-cdk/core:checkSecretUsage": true,
+  "@aws-cdk/core:target-partitions": [
+    "aws",
+    "aws-cn"
+  ],
+  "@aws-cdk-containers/ecs-service-extensions:enableDefaultLogDriver": true,
+  "@aws-cdk/aws-ec2:uniqueImdsv2TemplateName": true,
+  "@aws-cdk/aws-ecs:arnFormatIncludesClusterName": true,
+  "@aws-cdk/aws-iam:minimizePolicies": true,
+  "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+  "@aws-cdk/aws-codepipeline:crossAccountKeyAliasStackSafeResourceName": true,
+  "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
+  "@aws-cdk/aws-sns-subscriptions:restrictSqsDescryption": true,
+  "@aws-cdk/aws-apigateway:disableCloudWatchRole": false,
+  "@aws-cdk/core:enableStackNameDuplicates": true,
+  "@aws-cdk/core:stackRelativeExports": true,
+  "@aws-cdk/aws-rds:lowercaseDbIdentifier": true,
+  "@aws-cdk/aws-lambda:recognizeVersionProps": true,
+  "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": true,
+  "environment-aware-auth": {
+    "local": {
+      "stage": "local",
+      "cognito_authorizer_enabled": false,
+      "jwt_signature_verification": false,
+      "description": "LocalStack development environment with manual JWT decode"
+    },
+    "development": {
+      "stage": "local", 
+      "cognito_authorizer_enabled": false,
+      "jwt_signature_verification": false,
+      "description": "Development environment compatible with existing setup"
+    },
+    "prod": {
+      "stage": "prod", 
+      "cognito_authorizer_enabled": true,
+      "jwt_signature_verification": true,
+      "description": "Production environment with full Cognito authorization"
+    }
+  }
+}

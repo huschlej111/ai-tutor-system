@@ -1,0 +1,28 @@
+# Main project dependencies
+aws-cdk-lib==2.100.0
+constructs>=10.0.0,<11.0.0
+boto3>=1.26.0
+psycopg2-binary>=2.9.0
+PyJWT>=2.8.0  # DEPRECATED: Only for legacy support, use AWS Cognito instead
+bcrypt>=4.0.0  # DEPRECATED: Only for legacy support, use AWS Cognito instead
+python-dotenv>=1.0.0
+
+# Development dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+hypothesis>=6.82.0
+moto>=4.2.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0
+
+# LocalStack dependencies
+localstack>=3.0.0
+awscli-local>=0.22
+requests>=2.28.0
+
+# Security analysis tools
+bandit>=1.7.5
+checkov>=3.0.0
+truffleHog>=2.2.1
+pip-audit>=2.6.0

@@ -1,0 +1,143 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+      nodejs: 18
+    commands:
+      - echo "Installing dependencies..."
+      - python -m pip install --upgrade pip
+      - pip install -r requirements.txt
+      - pip install pytest pytest-cov bandit checkov pip-audit
+      - npm install -g aws-cdk
+      
+      # Install frontend dependencies
+      - cd frontend && npm ci && cd ..
+      
+      # Install TruffleHog for secrets scanning
+      - curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+
+  pre_build:
+    commands:
+      - echo "Running pre-build security and quality checks..."
+      
+      # Create reports directory
+      - mkdir -p build-reports
+      
+      # Run security scans
+      - echo "Running Bandit SAST scan..."
+      - bandit -r src/ infrastructure/ scripts/ -f json -o build-reports/bandit-report.json --severity-level medium --confidence-level medium || true
+      
+      - echo "Running Checkov infrastructure scan..."
+      - checkov --config-file .checkov.yml --output json --output-file-path build-reports/checkov-report.json || true
+      
+      - echo "Running TruffleHog secrets scan..."
+      - trufflehog filesystem . --config .truffleHogConfig.yml --json --no-update > build-reports/trufflehog-report.json || true
+      
+      - echo "Running pip-audit dependency scan..."
+      - pip-audit --format json --output build-reports/pip-audit-report.json --desc || true
+      
+      # Run tests
+      - echo "Running Python tests..."
+      - python -m pytest tests/ -v --cov=src --cov-report=json --cov-report=html --junitxml=build-reports/pytest-results.xml
+      
+      # Build and test frontend
+      - echo "Building and testing frontend..."
+      - cd frontend
+      - npm run build
+      - npm run test -- --coverage --watchAll=false --testResultsProcessor=jest-junit
+      - cd ..
+      
+      # Generate security summary
+      - echo "Generating security summary..."
+      - python scripts/security_scan.py || true
+
+  build:
+    commands:
+      - echo "Building deployment packages..."
+      
+      # Package Lambda functions
+      - echo "Packaging Lambda functions..."
+      - mkdir -p dist/lambda
+      
+      # Package each Lambda function
+      - for func in src/lambda_functions/*/; do
+          func_name=$(basename "$func");
+          echo "Packaging $func_name...";
+          cd "$func";
+          zip -r "../../../dist/lambda/${func_name}.zip" . -x "*.pyc" "__pycache__/*" "*.git*";
+          cd ../../..;
+        done
+      
+      # Package shared utilities as Lambda layer
+      - echo "Packaging shared utilities layer..."
+      - cd src/shared
+      - mkdir -p python/lib/python3.11/site-packages
+      - cp -r . python/lib/python3.11/site-packages/
+      - zip -r ../../dist/lambda/shared-layer.zip python/
+      - cd ../..
+      
+      # Package ML model as Lambda layer
+      - echo "Packaging ML model layer..."
+      - cd final_similarity_model
+      - zip -r ../dist/lambda/ml-model-layer.zip .
+      - cd ..
+      
+      # Prepare CDK deployment
+      - echo "Preparing CDK deployment..."
+      - cd infrastructure
+      - cdk synth --output ../dist/cdk-out
+      - cd ..
+      
+      # Package frontend build
+      - echo "Packaging frontend..."
+      - cd frontend/dist
+      - zip -r ../../dist/frontend.zip .
+      - cd ../..
+
+  post_build:
+    commands:
+      - echo "Post-build phase..."
+      
+      # Check if security scans passed
+      - |
+        if [ -f build-reports/security-summary.json ]; then
+          if grep -q '"overall_status": "FAIL"' build-reports/security-summary.json; then
+            echo "❌ Security issues found - failing build"
+            exit 1
+          fi
+        fi
+      
+      # Check test results
+      - |
+        if [ ! -f build-reports/pytest-results.xml ]; then
+          echo "❌ Python tests failed - no results file found"
+          exit 1
+        fi
+      
+      - echo "✅ Build completed successfully"
+
+artifacts:
+  files:
+    - 'dist/**/*'
+    - 'build-reports/**/*'
+  name: tutor-system-build-$CODEBUILD_BUILD_NUMBER
+
+reports:
+  pytest-reports:
+    files:
+      - 'build-reports/pytest-results.xml'
+    file-format: 'JUNITXML'
+  
+  coverage-reports:
+    files:
+      - 'htmlcov/index.html'
+    file-format: 'CLOVERXML'
+    base-directory: 'htmlcov'
+
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'
+    - 'frontend/node_modules/**/*'
+    - '/root/.npm/**/*'

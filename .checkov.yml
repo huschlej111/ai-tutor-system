@@ -1,0 +1,81 @@
+# Checkov configuration for CDK infrastructure security validation
+directory:
+  - infrastructure/
+  - cdk.out/
+
+# Output formats
+output:
+  - cli
+  - json
+
+# Output file for JSON report
+output-file-path: security-reports/checkov-report.json
+
+# Framework to scan
+framework:
+  - cloudformation
+  - terraform
+  - kubernetes
+  - dockerfile
+  - secrets
+  - github_configuration
+
+# Skip specific checks that are not applicable or acceptable risks
+skip-check:
+  # CloudFormation/CDK specific skips
+  - CKV_AWS_18   # S3 bucket should have access logging configured (not needed for all buckets)
+  - CKV_AWS_21   # S3 bucket should have versioning enabled (not needed for all buckets)
+  - CKV_AWS_144  # S3 bucket should have cross-region replication (not needed for single region)
+  - CKV_AWS_145  # S3 bucket should have lifecycle configuration (not needed for all buckets)
+  
+  # Lambda specific skips that may not apply to our use case
+  - CKV_AWS_115  # Lambda function should have a dead letter queue (not needed for all functions)
+  - CKV_AWS_116  # Lambda function should have reserved concurrency (not needed for all functions)
+  - CKV_AWS_117  # Lambda function should be configured inside a VPC (some functions don't need VPC)
+  
+  # RDS specific skips for Aurora Serverless
+  - CKV_AWS_133  # RDS instance should have backup retention period (Aurora Serverless handles this differently)
+
+# Severity threshold (LOW, MEDIUM, HIGH, CRITICAL)
+check-severity: MEDIUM
+
+# Enable quiet mode to reduce noise
+quiet: false
+
+# Enable compact output
+compact: true
+
+# Download external modules
+download-external-modules: true
+
+# External modules directory
+external-modules-download-path: .checkov
+
+# Enable secrets scanning
+enable-secret-scan-all-files: true
+
+# Secrets scan file types
+secrets-scan-file-type:
+  - .py
+  - .yml
+  - .yaml
+  - .json
+  - .tf
+  - .js
+  - .ts
+  - .sh
+  - .env
+
+# Custom policies directory (if we create custom policies later)
+# external-checks-dir: security/custom-policies
+
+# Baseline file to compare against (for CI/CD)
+# baseline: security-reports/checkov-baseline.json
+
+# Soft fail mode (don't exit with error code on findings)
+soft-fail: false
+
+# Hard fail on specific severity levels
+hard-fail-on:
+  - HIGH
+  - CRITICAL

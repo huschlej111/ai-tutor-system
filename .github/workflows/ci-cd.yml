@@ -1,0 +1,472 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  AWS_REGION: us-east-1
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Security and quality checks
+  security-checks:
+    name: Security & Quality Checks
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install bandit checkov pip-audit
+    
+    - name: Install TruffleHog
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+    
+    - name: Create security reports directory
+      run: mkdir -p security-reports
+    
+    - name: Run Bandit SAST
+      run: |
+        bandit -r src/ infrastructure/ scripts/ \
+          -f json -o security-reports/bandit-report.json \
+          --severity-level medium --confidence-level medium
+      continue-on-error: true
+    
+    - name: Run Checkov Infrastructure Scan
+      run: |
+        checkov --config-file .checkov.yml \
+          --output json --output-file-path security-reports/checkov-report.json
+      continue-on-error: true
+    
+    - name: Run TruffleHog Secrets Scan
+      run: |
+        trufflehog filesystem . \
+          --config .truffleHogConfig.yml \
+          --json --no-update > security-reports/trufflehog-report.json
+      continue-on-error: true
+    
+    - name: Run pip-audit Dependency Scan
+      run: |
+        pip-audit --format json \
+          --output security-reports/pip-audit-report.json \
+          --desc --progress-spinner
+      continue-on-error: true
+    
+    - name: Generate Security Summary
+      run: python scripts/security_scan.py
+      continue-on-error: true
+    
+    - name: Upload Security Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: security-reports/
+        retention-days: 30
+
+  # Backend tests
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    needs: security-checks
+    
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_USER: testuser
+          POSTGRES_DB: tutor_system_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-xdist
+    
+    - name: Set up test environment
+      run: |
+        export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
+        export ENVIRONMENT="test"
+    
+    - name: Run database migrations
+      run: |
+        export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
+        python scripts/setup_local_database.py
+    
+    - name: Run Python tests
+      run: |
+        export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
+        export ENVIRONMENT="test"
+        python -m pytest tests/ -v --cov=src --cov-report=xml --cov-report=html --junitxml=pytest-results.xml -n auto
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: backend-test-results
+        path: |
+          pytest-results.xml
+          htmlcov/
+          .coverage
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      if: always()
+      with:
+        file: ./coverage.xml
+        flags: backend
+        name: backend-coverage
+
+  # Frontend tests
+  frontend-tests:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    needs: security-checks
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run ESLint
+      run: |
+        cd frontend
+        npm run lint
+    
+    - name: Run TypeScript type checking
+      run: |
+        cd frontend
+        npm run type-check
+    
+    - name: Run frontend tests
+      run: |
+        cd frontend
+        npm run test -- --coverage --watchAll=false --testResultsProcessor=jest-junit
+    
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+    
+    - name: Upload frontend test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: frontend-test-results
+        path: |
+          frontend/junit.xml
+          frontend/coverage/
+    
+    - name: Upload frontend build
+      uses: actions/upload-artifact@v3
+      with:
+        name: frontend-build
+        path: frontend/dist/
+
+  # Integration tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+    
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_USER: testuser
+          POSTGRES_DB: tutor_system_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      localstack:
+        image: localstack/localstack:latest
+        env:
+          SERVICES: lambda,apigateway,s3,secretsmanager,cognito-idp
+          DEBUG: 1
+          DATA_DIR: /tmp/localstack/data
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd "curl -f http://localhost:4566/_localstack/health"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Wait for LocalStack
+      run: |
+        timeout 60 bash -c 'until curl -f http://localhost:4566/_localstack/health; do sleep 2; done'
+    
+    - name: Set up test environment
+      run: |
+        export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
+        export LOCALSTACK_ENDPOINT="http://localhost:4566"
+        export AWS_ACCESS_KEY_ID="test"
+        export AWS_SECRET_ACCESS_KEY="test"
+        export AWS_DEFAULT_REGION="us-east-1"
+        export ENVIRONMENT="test"
+    
+    - name: Run integration tests
+      run: |
+        export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
+        export LOCALSTACK_ENDPOINT="http://localhost:4566"
+        export AWS_ACCESS_KEY_ID="test"
+        export AWS_SECRET_ACCESS_KEY="test"
+        export AWS_DEFAULT_REGION="us-east-1"
+        export ENVIRONMENT="test"
+        python -m pytest tests/test_*integration*.py -v --junitxml=integration-results.xml
+    
+    - name: Upload integration test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: integration-test-results
+        path: integration-results.xml
+
+  # Deploy to development
+  deploy-development:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, integration-tests]
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    
+    environment:
+      name: development
+      url: https://dev.know-it-all-tutor.com
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+    
+    - name: Install CDK
+      run: |
+        npm install -g aws-cdk
+        pip install aws-cdk-lib constructs
+    
+    - name: Install dependencies
+      run: |
+        pip install -r infrastructure/requirements.txt
+    
+    - name: Deploy infrastructure
+      run: |
+        cd infrastructure
+        cdk bootstrap --context environment=development
+        cdk deploy --all --require-approval never --context environment=development
+    
+    - name: Run database migrations
+      run: |
+        aws lambda invoke \
+          --function-name tutor-db-migrate-development \
+          --payload '{}' \
+          /tmp/migration-result.json
+        cat /tmp/migration-result.json
+    
+    - name: Deploy frontend
+      run: |
+        cd frontend
+        npm ci
+        npm run build
+        
+        # Get S3 bucket name from CloudFormation outputs
+        BUCKET_NAME=$(aws cloudformation describe-stacks \
+          --stack-name TutorSystemStack-development \
+          --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
+          --output text)
+        
+        aws s3 sync dist/ s3://$BUCKET_NAME --delete
+
+  # Deploy to production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, integration-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    environment:
+      name: production
+      url: https://app.know-it-all-tutor.com
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+    
+    - name: Install CDK
+      run: |
+        npm install -g aws-cdk
+        pip install aws-cdk-lib constructs
+    
+    - name: Install dependencies
+      run: |
+        pip install -r infrastructure/requirements.txt
+    
+    - name: Deploy infrastructure
+      run: |
+        cd infrastructure
+        cdk bootstrap --context environment=production
+        cdk deploy --all --require-approval never --context environment=production
+    
+    - name: Run database migrations
+      run: |
+        aws lambda invoke \
+          --function-name tutor-db-migrate-production \
+          --payload '{}' \
+          /tmp/migration-result.json
+        cat /tmp/migration-result.json
+    
+    - name: Deploy frontend
+      run: |
+        cd frontend
+        npm ci
+        npm run build
+        
+        # Get S3 bucket and CloudFront distribution from CloudFormation outputs
+        BUCKET_NAME=$(aws cloudformation describe-stacks \
+          --stack-name TutorSystemStack-production \
+          --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
+          --output text)
+        
+        DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+          --stack-name TutorSystemStack-production \
+          --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+          --output text)
+        
+        # Deploy with cache optimization
+        aws s3 sync dist/ s3://$BUCKET_NAME --delete \
+          --cache-control "public, max-age=31536000, immutable" \
+          --exclude "*.html"
+        
+        aws s3 sync dist/ s3://$BUCKET_NAME --delete \
+          --cache-control "public, max-age=0, must-revalidate" \
+          --include "*.html"
+        
+        # Invalidate CloudFront cache
+        aws cloudfront create-invalidation \
+          --distribution-id $DISTRIBUTION_ID \
+          --paths "/*"
+
+  # Notify deployment status
+  notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-development, deploy-production]
+    if: always()
+    
+    steps:
+    - name: Notify success
+      if: needs.deploy-development.result == 'success' || needs.deploy-production.result == 'success'
+      run: |
+        echo "✅ Deployment completed successfully"
+        # Add Slack/Teams notification here if needed
+    
+    - name: Notify failure
+      if: needs.deploy-development.result == 'failure' || needs.deploy-production.result == 'failure'
+      run: |
+        echo "❌ Deployment failed"
+        # Add Slack/Teams notification here if needed
+        exit 1

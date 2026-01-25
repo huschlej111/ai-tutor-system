@@ -1,0 +1,759 @@
+"""
+Quiz Engine Lambda Function Handler
+Handles quiz session management and question presentation
+"""
+import json
+import os
+import uuid
+import logging
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+from shared.database import get_db_cursor, execute_query, execute_query_one
+from shared.response_utils import create_response, handle_error
+from shared.auth_utils import extract_user_from_cognito_event
+
+logger = logging.getLogger(__name__)
+
+
+def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Main handler for quiz engine operations
+    """
+    try:
+        http_method = event.get('httpMethod')
+        path = event.get('path', '')
+        
+        # Verify authentication using Cognito authorizer context
+        auth_result = extract_user_from_cognito_event(event)
+        if not auth_result['valid']:
+            return create_response(401, {'error': 'Unauthorized'})
+        
+        if http_method == 'POST':
+            if '/quiz/start' in path:
+                return handle_start_quiz(event, auth_result['user_id'])
+            elif '/quiz/answer' in path:
+                return handle_submit_answer(event, auth_result['user_id'])
+            elif '/quiz/pause' in path:
+                return handle_pause_quiz(event, auth_result['user_id'])
+            elif '/quiz/resume' in path:
+                return handle_resume_quiz(event, auth_result['user_id'])
+            elif '/quiz/restart' in path:
+                return handle_restart_quiz(event, auth_result['user_id'])
+        elif http_method == 'GET':
+            if '/quiz/question' in path:
+                return handle_get_next_question(event, auth_result['user_id'])
+            elif '/quiz/complete' in path:
+                return handle_complete_quiz(event, auth_result['user_id'])
+        
+        return create_response(404, {'error': 'Endpoint not found'})
+        
+    except Exception as e:
+        return handle_error(e)
+
+
+def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle quiz session creation"""
+    try:
+        # Parse request body
+        body = json.loads(event.get('body', '{}'))
+        domain_id = body.get('domain_id')
+        
+        if not domain_id:
+            return create_response(400, {'error': 'domain_id is required'})
+        
+        # Validate domain exists and belongs to user or is public
+        domain_query = """
+            SELECT id, data->>'name' as name, user_id
+            FROM tree_nodes 
+            WHERE id = %s AND node_type = 'domain'
+        """
+        domain_result = execute_query_one(domain_query, (domain_id,))
+        
+        if not domain_result:
+            return create_response(404, {'error': 'Domain not found'})
+        
+        domain_user_id = domain_result[2]
+        
+        # Check if user has access to this domain (owner or public domain)
+        if domain_user_id != user_id:
+            # For now, only allow access to own domains
+            # TODO: Implement public domain sharing
+            return create_response(403, {'error': 'Access denied to this domain'})
+        
+        # Get all terms in the domain
+        terms_query = """
+            SELECT id, data->>'term' as term, data->>'definition' as definition
+            FROM tree_nodes 
+            WHERE parent_id = %s AND node_type = 'term'
+            ORDER BY created_at
+        """
+        terms_result = execute_query(terms_query, (domain_id,))
+        
+        if not terms_result:
+            return create_response(400, {'error': 'Domain has no terms to quiz on'})
+        
+        # Check for existing active session
+        existing_session_query = """
+            SELECT id, current_term_index, total_questions, session_data
+            FROM quiz_sessions 
+            WHERE user_id = %s AND domain_id = %s AND status = 'active'
+        """
+        existing_session = execute_query_one(existing_session_query, (user_id, domain_id))
+        
+        if existing_session:
+            # Return existing session
+            session_id = existing_session[0]
+            current_index = existing_session[1]
+            total_questions = existing_session[2]
+            session_data = existing_session[3] or {}
+            
+            # Get current question
+            if current_index < len(terms_result):
+                current_term = terms_result[current_index]
+                current_question = {
+                    'term_id': str(current_term[0]),
+                    'term': current_term[1],
+                    'question_number': current_index + 1,
+                    'total_questions': total_questions
+                }
+            else:
+                current_question = None
+            
+            return create_response(200, {
+                'session_id': str(session_id),
+                'status': 'resumed',
+                'domain_name': domain_result[1],
+                'current_question': current_question,
+                'progress': {
+                    'current_index': current_index,
+                    'total_questions': total_questions,
+                    'completed': current_index >= total_questions
+                }
+            })
+        
+        # Create new quiz session
+        session_id = str(uuid.uuid4())
+        total_questions = len(terms_result)
+        
+        # Prepare session data with term order
+        session_data = {
+            'term_order': [str(term[0]) for term in terms_result],
+            'domain_name': domain_result[1]
+        }
+        
+        # Insert new session
+        insert_session_query = """
+            INSERT INTO quiz_sessions (id, user_id, domain_id, status, current_term_index, total_questions, session_data)
+            VALUES (%s, %s, %s, 'active', 0, %s, %s)
+        """
+        execute_query(insert_session_query, (
+            session_id, user_id, domain_id, total_questions, json.dumps(session_data)
+        ))
+        
+        # Get first question
+        first_term = terms_result[0]
+        current_question = {
+            'term_id': str(first_term[0]),
+            'term': first_term[1],
+            'question_number': 1,
+            'total_questions': total_questions
+        }
+        
+        return create_response(200, {
+            'session_id': session_id,
+            'status': 'started',
+            'domain_name': domain_result[1],
+            'current_question': current_question,
+            'progress': {
+                'current_index': 0,
+                'total_questions': total_questions,
+                'completed': False
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return create_response(400, {'error': 'Invalid JSON in request body'})
+    except Exception as e:
+        logger.error(f"Error starting quiz: {str(e)}")
+        return handle_error(e)
+
+
+def handle_submit_answer(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle answer submission and evaluation"""
+    try:
+        # Parse request body
+        body = json.loads(event.get('body', '{}'))
+        session_id = body.get('session_id')
+        student_answer = body.get('answer', '').strip()
+        
+        if not session_id:
+            return create_response(400, {'error': 'session_id is required'})
+        
+        if not student_answer:
+            return create_response(400, {'error': 'answer is required'})
+        
+        # Verify session exists and belongs to user
+        session_query = """
+            SELECT qs.id, qs.status, qs.current_term_index, qs.total_questions, 
+                   qs.session_data, qs.correct_answers, tn.data->>'name' as domain_name
+            FROM quiz_sessions qs
+            JOIN tree_nodes tn ON qs.domain_id = tn.id
+            WHERE qs.id = %s AND qs.user_id = %s
+        """
+        session_result = execute_query_one(session_query, (session_id, user_id))
+        
+        if not session_result:
+            return create_response(404, {'error': 'Quiz session not found'})
+        
+        current_status = session_result[1]
+        current_index = session_result[2]
+        total_questions = session_result[3]
+        session_data = session_result[4] or {}
+        correct_answers = session_result[5]
+        domain_name = session_result[6]
+        
+        if current_status != 'active':
+            return create_response(400, {'error': f'Cannot submit answer for quiz in {current_status} state'})
+        
+        # Check if quiz is already completed
+        if current_index >= total_questions:
+            return create_response(400, {'error': 'Quiz is already completed'})
+        
+        # Get current term details
+        term_order = session_data.get('term_order', [])
+        if current_index >= len(term_order):
+            return create_response(400, {'error': 'No current question available'})
+        
+        term_id = term_order[current_index]
+        
+        # Get term details for evaluation
+        term_query = """
+            SELECT data->>'term' as term, data->>'definition' as definition
+            FROM tree_nodes 
+            WHERE id = %s
+        """
+        term_result = execute_query_one(term_query, (term_id,))
+        
+        if not term_result:
+            return create_response(404, {'error': 'Current question not found'})
+        
+        term_text = term_result[0]
+        correct_answer = term_result[1]
+        
+        # Evaluate the answer using semantic similarity
+        # For now, we'll use a simple evaluation - full integration with answer evaluation service
+        # would require making HTTP calls to the evaluation Lambda
+        
+        # Simple evaluation logic (placeholder for full semantic evaluation)
+        similarity_score = calculate_simple_similarity(student_answer.lower(), correct_answer.lower())
+        threshold = 0.7  # Default threshold
+        is_correct = similarity_score >= threshold
+        
+        # Generate feedback
+        if is_correct:
+            feedback = "Correct! Well done."
+        elif similarity_score >= 0.5:
+            feedback = f"Close, but not quite right. The correct answer is: {correct_answer}"
+        else:
+            feedback = f"Incorrect. The correct answer is: {correct_answer}"
+        
+        # Record the progress
+        progress_query = """
+            INSERT INTO progress_records (user_id, term_id, session_id, student_answer, correct_answer, 
+                                        is_correct, similarity_score, feedback)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        execute_query(progress_query, (
+            user_id, term_id, session_id, student_answer, correct_answer,
+            is_correct, similarity_score, feedback
+        ))
+        
+        # Update session progress
+        new_correct_answers = correct_answers + (1 if is_correct else 0)
+        new_index = current_index + 1
+        
+        # Check if quiz is completed
+        quiz_completed = new_index >= total_questions
+        
+        if quiz_completed:
+            # Mark session as completed
+            update_session_query = """
+                UPDATE quiz_sessions 
+                SET current_term_index = %s, correct_answers = %s, status = 'completed', completed_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """
+            execute_query(update_session_query, (new_index, new_correct_answers, session_id))
+        else:
+            # Update session progress
+            update_session_query = """
+                UPDATE quiz_sessions 
+                SET current_term_index = %s, correct_answers = %s
+                WHERE id = %s
+            """
+            execute_query(update_session_query, (new_index, new_correct_answers, session_id))
+        
+        # Prepare next question if not completed
+        next_question = None
+        if not quiz_completed and new_index < len(term_order):
+            next_term_id = term_order[new_index]
+            next_term_query = """
+                SELECT data->>'term' as term
+                FROM tree_nodes 
+                WHERE id = %s
+            """
+            next_term_result = execute_query_one(next_term_query, (next_term_id,))
+            
+            if next_term_result:
+                next_question = {
+                    'term_id': next_term_id,
+                    'term': next_term_result[0],
+                    'question_number': new_index + 1,
+                    'total_questions': total_questions
+                }
+        
+        return create_response(200, {
+            'session_id': session_id,
+            'evaluation': {
+                'is_correct': is_correct,
+                'similarity_score': round(similarity_score, 2),
+                'feedback': feedback,
+                'correct_answer': correct_answer
+            },
+            'progress': {
+                'current_index': new_index,
+                'total_questions': total_questions,
+                'correct_answers': new_correct_answers,
+                'completed': quiz_completed
+            },
+            'next_question': next_question,
+            'quiz_completed': quiz_completed
+        })
+        
+    except json.JSONDecodeError:
+        return create_response(400, {'error': 'Invalid JSON in request body'})
+    except Exception as e:
+        logger.error(f"Error submitting answer: {str(e)}")
+        return handle_error(e)
+
+
+def handle_restart_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle quiz restart functionality"""
+    try:
+        # Parse request body
+        body = json.loads(event.get('body', '{}'))
+        domain_id = body.get('domain_id')
+        
+        if not domain_id:
+            return create_response(400, {'error': 'domain_id is required'})
+        
+        # Validate domain exists and user has access
+        domain_query = """
+            SELECT id, data->>'name' as name, user_id
+            FROM tree_nodes 
+            WHERE id = %s AND node_type = 'domain'
+        """
+        domain_result = execute_query_one(domain_query, (domain_id,))
+        
+        if not domain_result:
+            return create_response(404, {'error': 'Domain not found'})
+        
+        domain_user_id = domain_result[2]
+        
+        # Check if user has access to this domain
+        if domain_user_id != user_id:
+            return create_response(403, {'error': 'Access denied to this domain'})
+        
+        # Mark any existing active or paused sessions as abandoned
+        abandon_query = """
+            UPDATE quiz_sessions 
+            SET status = 'abandoned'
+            WHERE user_id = %s AND domain_id = %s AND status IN ('active', 'paused')
+        """
+        execute_query(abandon_query, (user_id, domain_id))
+        
+        # Start a new quiz session (reuse the start quiz logic)
+        return handle_start_quiz(event, user_id)
+        
+    except json.JSONDecodeError:
+        return create_response(400, {'error': 'Invalid JSON in request body'})
+    except Exception as e:
+        logger.error(f"Error restarting quiz: {str(e)}")
+        return handle_error(e)
+
+
+def calculate_simple_similarity(answer1: str, answer2: str) -> float:
+    """
+    Simple similarity calculation based on word overlap
+    This is a placeholder for the full semantic similarity evaluation
+    """
+    words1 = set(answer1.split())
+    words2 = set(answer2.split())
+    
+    if not words1 and not words2:
+        return 1.0
+    
+    if not words1 or not words2:
+        return 0.0
+    
+    intersection = words1.intersection(words2)
+    union = words1.union(words2)
+    
+    return len(intersection) / len(union) if union else 0.0
+
+
+def handle_get_next_question(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle getting next question in quiz"""
+    try:
+        # Parse query parameters
+        query_params = event.get('queryStringParameters') or {}
+        session_id = query_params.get('session_id')
+        
+        if not session_id:
+            return create_response(400, {'error': 'session_id is required'})
+        
+        # Verify session exists and belongs to user
+        session_query = """
+            SELECT qs.id, qs.status, qs.current_term_index, qs.total_questions, 
+                   qs.session_data, tn.data->>'name' as domain_name
+            FROM quiz_sessions qs
+            JOIN tree_nodes tn ON qs.domain_id = tn.id
+            WHERE qs.id = %s AND qs.user_id = %s
+        """
+        session_result = execute_query_one(session_query, (session_id, user_id))
+        
+        if not session_result:
+            return create_response(404, {'error': 'Quiz session not found'})
+        
+        current_status = session_result[1]
+        current_index = session_result[2]
+        total_questions = session_result[3]
+        session_data = session_result[4] or {}
+        domain_name = session_result[5]
+        
+        if current_status != 'active':
+            return create_response(400, {'error': f'Cannot get question for quiz in {current_status} state'})
+        
+        # Check if quiz is completed
+        if current_index >= total_questions:
+            return create_response(200, {
+                'session_id': session_id,
+                'completed': True,
+                'message': 'Quiz completed'
+            })
+        
+        # Get current question
+        term_order = session_data.get('term_order', [])
+        if current_index < len(term_order):
+            term_id = term_order[current_index]
+            
+            # Get term details
+            term_query = """
+                SELECT data->>'term' as term, data->>'definition' as definition
+                FROM tree_nodes 
+                WHERE id = %s
+            """
+            term_result = execute_query_one(term_query, (term_id,))
+            
+            if term_result:
+                current_question = {
+                    'term_id': term_id,
+                    'term': term_result[0],
+                    'question_number': current_index + 1,
+                    'total_questions': total_questions
+                }
+            else:
+                return create_response(404, {'error': 'Question not found'})
+        else:
+            return create_response(404, {'error': 'Question not found'})
+        
+        return create_response(200, {
+            'session_id': session_id,
+            'domain_name': domain_name,
+            'current_question': current_question,
+            'progress': {
+                'current_index': current_index,
+                'total_questions': total_questions,
+                'completed': False
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting next question: {str(e)}")
+        return handle_error(e)
+
+
+def handle_pause_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle pausing quiz session"""
+    try:
+        # Parse request body
+        body = json.loads(event.get('body', '{}'))
+        session_id = body.get('session_id')
+        
+        if not session_id:
+            return create_response(400, {'error': 'session_id is required'})
+        
+        # Verify session exists and belongs to user
+        session_query = """
+            SELECT id, status, current_term_index, total_questions
+            FROM quiz_sessions 
+            WHERE id = %s AND user_id = %s
+        """
+        session_result = execute_query_one(session_query, (session_id, user_id))
+        
+        if not session_result:
+            return create_response(404, {'error': 'Quiz session not found'})
+        
+        current_status = session_result[1]
+        
+        if current_status != 'active':
+            return create_response(400, {'error': f'Cannot pause quiz in {current_status} state'})
+        
+        # Update session to paused
+        update_query = """
+            UPDATE quiz_sessions 
+            SET status = 'paused', paused_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """
+        execute_query(update_query, (session_id,))
+        
+        return create_response(200, {
+            'session_id': session_id,
+            'status': 'paused',
+            'message': 'Quiz paused successfully'
+        })
+        
+    except json.JSONDecodeError:
+        return create_response(400, {'error': 'Invalid JSON in request body'})
+    except Exception as e:
+        logger.error(f"Error pausing quiz: {str(e)}")
+        return handle_error(e)
+
+
+def handle_resume_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle resuming quiz session"""
+    try:
+        # Parse request body
+        body = json.loads(event.get('body', '{}'))
+        session_id = body.get('session_id')
+        
+        if not session_id:
+            return create_response(400, {'error': 'session_id is required'})
+        
+        # Verify session exists and belongs to user
+        session_query = """
+            SELECT qs.id, qs.status, qs.current_term_index, qs.total_questions, 
+                   qs.session_data, tn.data->>'name' as domain_name
+            FROM quiz_sessions qs
+            JOIN tree_nodes tn ON qs.domain_id = tn.id
+            WHERE qs.id = %s AND qs.user_id = %s
+        """
+        session_result = execute_query_one(session_query, (session_id, user_id))
+        
+        if not session_result:
+            return create_response(404, {'error': 'Quiz session not found'})
+        
+        current_status = session_result[1]
+        current_index = session_result[2]
+        total_questions = session_result[3]
+        session_data = session_result[4] or {}
+        domain_name = session_result[5]
+        
+        if current_status != 'paused':
+            return create_response(400, {'error': f'Cannot resume quiz in {current_status} state'})
+        
+        # Check if quiz is already completed
+        if current_index >= total_questions:
+            return create_response(400, {'error': 'Quiz is already completed'})
+        
+        # Update session to active
+        update_query = """
+            UPDATE quiz_sessions 
+            SET status = 'active', paused_at = NULL
+            WHERE id = %s
+        """
+        execute_query(update_query, (session_id,))
+        
+        # Get current question
+        term_order = session_data.get('term_order', [])
+        if current_index < len(term_order):
+            term_id = term_order[current_index]
+            
+            # Get term details
+            term_query = """
+                SELECT data->>'term' as term, data->>'definition' as definition
+                FROM tree_nodes 
+                WHERE id = %s
+            """
+            term_result = execute_query_one(term_query, (term_id,))
+            
+            if term_result:
+                current_question = {
+                    'term_id': term_id,
+                    'term': term_result[0],
+                    'question_number': current_index + 1,
+                    'total_questions': total_questions
+                }
+            else:
+                current_question = None
+        else:
+            current_question = None
+        
+        return create_response(200, {
+            'session_id': session_id,
+            'status': 'resumed',
+            'domain_name': domain_name,
+            'current_question': current_question,
+            'progress': {
+                'current_index': current_index,
+                'total_questions': total_questions,
+                'completed': current_index >= total_questions
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return create_response(400, {'error': 'Invalid JSON in request body'})
+    except Exception as e:
+        logger.error(f"Error resuming quiz: {str(e)}")
+        return handle_error(e)
+
+
+def handle_complete_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle quiz completion and summary"""
+    try:
+        # Parse query parameters
+        query_params = event.get('queryStringParameters') or {}
+        session_id = query_params.get('session_id')
+        
+        if not session_id:
+            return create_response(400, {'error': 'session_id is required'})
+        
+        # Verify session exists and belongs to user
+        session_query = """
+            SELECT qs.id, qs.status, qs.current_term_index, qs.total_questions, 
+                   qs.correct_answers, qs.started_at, qs.completed_at, qs.session_data,
+                   tn.data->>'name' as domain_name
+            FROM quiz_sessions qs
+            JOIN tree_nodes tn ON qs.domain_id = tn.id
+            WHERE qs.id = %s AND qs.user_id = %s
+        """
+        session_result = execute_query_one(session_query, (session_id, user_id))
+        
+        if not session_result:
+            return create_response(404, {'error': 'Quiz session not found'})
+        
+        current_status = session_result[1]
+        current_index = session_result[2]
+        total_questions = session_result[3]
+        correct_answers = session_result[4]
+        started_at = session_result[5]
+        completed_at = session_result[6]
+        session_data = session_result[7] or {}
+        domain_name = session_result[8]
+        
+        # Check if quiz is completed
+        if current_status != 'completed':
+            # If quiz is not completed but all questions are answered, mark as completed
+            if current_index >= total_questions:
+                update_query = """
+                    UPDATE quiz_sessions 
+                    SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                """
+                execute_query(update_query, (session_id,))
+                completed_at = datetime.now()
+            else:
+                return create_response(400, {'error': 'Quiz is not yet completed'})
+        
+        # Get detailed progress records for this session
+        progress_query = """
+            SELECT pr.term_id, pr.student_answer, pr.correct_answer, pr.is_correct, 
+                   pr.similarity_score, pr.feedback, pr.created_at,
+                   tn.data->>'term' as term
+            FROM progress_records pr
+            JOIN tree_nodes tn ON pr.term_id = tn.id
+            WHERE pr.session_id = %s
+            ORDER BY pr.created_at
+        """
+        progress_results = execute_query(progress_query, (session_id,))
+        
+        # Calculate performance metrics
+        total_attempts = len(progress_results)
+        correct_count = sum(1 for record in progress_results if record[3])  # is_correct
+        incorrect_count = total_attempts - correct_count
+        
+        if total_attempts > 0:
+            accuracy_percentage = (correct_count / total_attempts) * 100
+            average_similarity = sum(record[4] or 0 for record in progress_results) / total_attempts
+        else:
+            accuracy_percentage = 0
+            average_similarity = 0
+        
+        # Calculate time taken
+        if started_at and completed_at:
+            time_taken_seconds = (completed_at - started_at).total_seconds()
+            time_taken_minutes = int(time_taken_seconds // 60)
+            time_taken_seconds = int(time_taken_seconds % 60)
+        else:
+            time_taken_minutes = 0
+            time_taken_seconds = 0
+        
+        # Prepare detailed results
+        detailed_results = []
+        for record in progress_results:
+            detailed_results.append({
+                'term': record[7],
+                'student_answer': record[1],
+                'correct_answer': record[2],
+                'is_correct': record[3],
+                'similarity_score': round(record[4] or 0, 2),
+                'feedback': record[5]
+            })
+        
+        # Generate performance summary
+        if accuracy_percentage >= 90:
+            performance_level = 'Excellent'
+            performance_message = 'Outstanding performance! You have mastered this domain.'
+        elif accuracy_percentage >= 80:
+            performance_level = 'Good'
+            performance_message = 'Good job! You have a solid understanding of this domain.'
+        elif accuracy_percentage >= 70:
+            performance_level = 'Fair'
+            performance_message = 'Fair performance. Consider reviewing the terms you missed.'
+        else:
+            performance_level = 'Needs Improvement'
+            performance_message = 'You may want to study this domain more before retaking the quiz.'
+        
+        # Check if user can restart quiz (for practice)
+        can_restart = True  # Always allow restart for practice
+        
+        quiz_summary = {
+            'session_id': session_id,
+            'domain_name': domain_name,
+            'status': 'completed',
+            'completion_time': completed_at.isoformat() if completed_at else None,
+            'performance': {
+                'total_questions': total_questions,
+                'correct_answers': correct_count,
+                'incorrect_answers': incorrect_count,
+                'accuracy_percentage': round(accuracy_percentage, 1),
+                'average_similarity_score': round(average_similarity, 2),
+                'performance_level': performance_level,
+                'performance_message': performance_message
+            },
+            'timing': {
+                'time_taken_minutes': time_taken_minutes,
+                'time_taken_seconds': time_taken_seconds,
+                'total_seconds': int((completed_at - started_at).total_seconds()) if started_at and completed_at else 0
+            },
+            'detailed_results': detailed_results,
+            'actions': {
+                'can_restart': can_restart,
+                'can_review': True
+            }
+        }
+        
+        return create_response(200, quiz_summary)
+        
+    except Exception as e:
+        logger.error(f"Error getting quiz completion summary: {str(e)}")
+        return handle_error(e)

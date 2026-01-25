@@ -1,0 +1,149 @@
+# TruffleHog configuration for secrets detection
+# Global configuration
+no_verification: false
+no_update: true
+archive_max_size: 20971520  # 20MB
+archive_max_depth: 5
+archive_timeout: "60s"
+include_detectors: []
+exclude_detectors: []
+custom_detectors_path: ""
+verify: true
+fail_without_verification: false
+filter_unverified: false
+filter_entropy: null
+config_filename: ""
+print_avg_detector_time: false
+
+# Git scanning configuration
+git:
+  # Scan entire git history
+  scan_options:
+    bare: false
+    max_depth: 1000000
+    include_paths: []
+    exclude_paths:
+      - "*.log"
+      - "*.tmp"
+      - "*.temp"
+      - "node_modules/"
+      - ".git/"
+      - "__pycache__/"
+      - "*.pyc"
+      - ".venv/"
+      - "venv/"
+      - "build/"
+      - "dist/"
+      - "cdk.out/"
+      - ".pytest_cache/"
+      - ".mypy_cache/"
+      - "*.egg-info/"
+    exclude_globs: []
+    since_commit: ""
+    branch: ""
+    max_file_size: 10485760  # 10MB
+
+# Filesystem scanning configuration  
+filesystem:
+  paths:
+    - "."
+  exclude_paths:
+    - ".git/"
+    - "node_modules/"
+    - "__pycache__/"
+    - ".venv/"
+    - "venv/"
+    - "build/"
+    - "dist/"
+    - "cdk.out/"
+    - ".pytest_cache/"
+    - ".mypy_cache/"
+    - "*.egg-info/"
+    - "security-reports/"
+  exclude_globs:
+    - "*.log"
+    - "*.tmp"
+    - "*.temp"
+    - "*.pyc"
+    - "*.pyo"
+    - "*.pyd"
+    - "*.so"
+    - "*.dll"
+    - "*.dylib"
+
+# Output configuration
+output:
+  format: "json"
+  file: "security-reports/trufflehog-report.json"
+  
+# Detector configuration
+detectors:
+  # AWS credentials
+  aws:
+    keywords:
+      - "aws_access_key_id"
+      - "aws_secret_access_key"
+      - "aws_session_token"
+    
+  # Generic secrets
+  generic:
+    keywords:
+      - "password"
+      - "passwd"
+      - "pwd"
+      - "secret"
+      - "key"
+      - "token"
+      - "api_key"
+      - "apikey"
+      - "auth"
+      - "credential"
+      - "cred"
+
+# Verification configuration
+verification:
+  # Enable verification for specific detectors
+  enabled: true
+  timeout: "10s"
+  
+  # Detector-specific verification settings
+  detectors:
+    aws:
+      verify: true
+    github:
+      verify: true
+    gitlab:
+      verify: true
+    slack:
+      verify: true
+
+# Allowlist configuration for known false positives
+allowlist:
+  paths:
+    - "tests/fixtures/"
+    - "examples/"
+    - "docs/"
+  
+  # Regex patterns for content to ignore
+  regexes:
+    - "example.*key"
+    - "test.*secret"
+    - "dummy.*password"
+    - "fake.*token"
+    - "placeholder.*credential"
+    - "AKIA[0-9A-Z]{16}"  # Example AWS access key pattern (for documentation)
+  
+  # Entropy thresholds
+  entropy:
+    min: 3.0
+    max: 8.0
+    
+  # Stopwords that indicate test/example data
+  stopwords:
+    - "example"
+    - "test"
+    - "dummy"
+    - "fake"
+    - "placeholder"
+    - "sample"
+    - "demo"
