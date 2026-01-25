@@ -1,0 +1,69 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+    commands:
+      - echo "Installing frontend dependencies..."
+      - cd frontend
+      - npm ci
+      - npm install -g aws-cdk
+
+  pre_build:
+    commands:
+      - echo "Running frontend tests and linting..."
+      - npm run lint
+      - npm run test -- --coverage --watchAll=false --testResultsProcessor=jest-junit
+      
+      # Type checking
+      - npm run type-check
+
+  build:
+    commands:
+      - echo "Building frontend application..."
+      - npm run build
+      
+      # Optimize build
+      - echo "Optimizing build artifacts..."
+      - ls -la dist/
+
+  post_build:
+    commands:
+      - echo "Preparing frontend deployment..."
+      
+      # Deploy to S3 and CloudFront
+      - |
+        if [ "$ENVIRONMENT" = "production" ]; then
+          aws s3 sync dist/ s3://$FRONTEND_BUCKET_NAME --delete --cache-control "public, max-age=31536000, immutable" --exclude "*.html"
+          aws s3 sync dist/ s3://$FRONTEND_BUCKET_NAME --delete --cache-control "public, max-age=0, must-revalidate" --include "*.html"
+          aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION_ID --paths "/*"
+        else
+          aws s3 sync dist/ s3://$FRONTEND_BUCKET_NAME --delete
+        fi
+      
+      - echo "Frontend deployment completed successfully"
+
+artifacts:
+  files:
+    - 'dist/**/*'
+    - 'coverage/**/*'
+  base-directory: 'frontend'
+  name: frontend-build-$CODEBUILD_BUILD_NUMBER
+
+reports:
+  jest-reports:
+    files:
+      - 'junit.xml'
+    file-format: 'JUNITXML'
+    base-directory: 'frontend'
+  
+  coverage-reports:
+    files:
+      - 'coverage/lcov.info'
+    file-format: 'CLOVERXML'
+    base-directory: 'frontend'
+
+cache:
+  paths:
+    - 'frontend/node_modules/**/*'

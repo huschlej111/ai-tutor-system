@@ -1,0 +1,20 @@
+# AWS CDK Core
+aws-cdk-lib>=2.100.0,<3.0.0
+constructs>=10.0.0,<11.0.0
+
+# Additional CDK modules (if needed separately)
+aws-cdk.aws-lambda-python-alpha>=2.100.0a0,<3.0.0a0
+
+# Utility libraries
+boto3>=1.28.0
+botocore>=1.31.0
+requests>=2.31.0
+
+# Development and testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+moto>=4.2.0
+
+# Security and compliance
+bandit>=1.7.5
+checkov>=2.4.0

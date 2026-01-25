@@ -1,0 +1,204 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design System Variables */
+:root {
+  /* Primary Colors */
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+  --color-primary-800: #1e40af;
+  --color-primary-900: #1e3a8a;
+
+  /* Success Colors */
+  --color-success-50: #ecfdf5;
+  --color-success-100: #d1fae5;
+  --color-success-200: #a7f3d0;
+  --color-success-300: #6ee7b7;
+  --color-success-400: #34d399;
+  --color-success-500: #10b981;
+  --color-success-600: #059669;
+  --color-success-700: #047857;
+  --color-success-800: #065f46;
+  --color-success-900: #064e3b;
+
+  /* Warning Colors */
+  --color-warning-50: #fffbeb;
+  --color-warning-100: #fef3c7;
+  --color-warning-200: #fde68a;
+  --color-warning-300: #fcd34d;
+  --color-warning-400: #fbbf24;
+  --color-warning-500: #f59e0b;
+  --color-warning-600: #d97706;
+  --color-warning-700: #b45309;
+  --color-warning-800: #92400e;
+  --color-warning-900: #78350f;
+
+  /* Error Colors */
+  --color-error-50: #fef2f2;
+  --color-error-100: #fee2e2;
+  --color-error-200: #fecaca;
+  --color-error-300: #fca5a5;
+  --color-error-400: #f87171;
+  --color-error-500: #ef4444;
+  --color-error-600: #dc2626;
+  --color-error-700: #b91c1c;
+  --color-error-800: #991b1b;
+  --color-error-900: #7f1d1d;
+
+  /* Info Colors */
+  --color-info-50: #f0f9ff;
+  --color-info-100: #e0f2fe;
+  --color-info-200: #bae6fd;
+  --color-info-300: #7dd3fc;
+  --color-info-400: #38bdf8;
+  --color-info-500: #0ea5e9;
+  --color-info-600: #0284c7;
+  --color-info-700: #0369a1;
+  --color-info-800: #075985;
+  --color-info-900: #0c4a6e;
+}
+
+/* Base Styles */
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900 font-sans;
+  }
+
+  * {
+    @apply border-gray-200;
+  }
+}
+
+/* Component Styles */
+@layer components {
+  /* Page Layout */
+  .page-header {
+    @apply mb-8;
+  }
+
+  .page-title {
+    @apply text-3xl font-bold text-gray-900 mb-2;
+  }
+
+  .page-subtitle {
+    @apply text-lg text-gray-600;
+  }
+
+  /* Cards */
+  .card {
+    @apply bg-white rounded-lg shadow-sm border border-gray-200;
+  }
+
+  .card-elevated {
+    @apply bg-white rounded-lg shadow-md border border-gray-200;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors duration-200;
+  }
+
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-gray-700 border-gray-300 hover:bg-gray-50 focus:ring-primary-500;
+  }
+
+  .btn-success {
+    @apply bg-success-600 text-white hover:bg-success-700 focus:ring-success-500;
+  }
+
+  .btn-warning {
+    @apply bg-warning-600 text-white hover:bg-warning-700 focus:ring-warning-500;
+  }
+
+  .btn-error {
+    @apply bg-error-600 text-white hover:bg-error-700 focus:ring-error-500;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  .btn-lg {
+    @apply px-6 py-3 text-base;
+  }
+
+  .btn:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  /* Form Elements */
+  .input {
+    @apply block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary-500 focus:border-primary-500;
+  }
+
+  .input:focus {
+    @apply ring-1;
+  }
+
+  .input-error {
+    @apply border-error-300 focus:ring-error-500 focus:border-error-500;
+  }
+
+  /* Text Utilities */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Loading States */
+  .loading-spinner {
+    @apply animate-spin rounded-full border-2 border-gray-300 border-t-primary-600;
+  }
+
+  /* Status Badges */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply bg-success-100 text-success-800;
+  }
+
+  .badge-warning {
+    @apply bg-warning-100 text-warning-800;
+  }
+
+  .badge-error {
+    @apply bg-error-100 text-error-800;
+  }
+
+  .badge-info {
+    @apply bg-info-100 text-info-800;
+  }
+
+  .badge-gray {
+    @apply bg-gray-100 text-gray-800;
+  }
+}
+
+/* Utility Classes */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
