@@ -394,7 +394,7 @@ graph TB
         end
         
         subgraph "Data Layer"
-            AURORA[(Aurora Serverless PostgreSQL)]
+            AURORA[(RDS PostgreSQL)]
             S3[S3 Storage]
             SECRETS[Secrets Manager]
         end
@@ -446,15 +446,15 @@ graph TB
 
 ### Serverless Architecture Pattern
 
-Based on research into AWS Lambda, Aurora Serverless, and Cognito integration patterns, the system follows these architectural decisions:
+Based on research into AWS Lambda, RDS PostgreSQL, and Cognito integration patterns, the system follows these architectural decisions:
 
 - **AWS Cognito User Pool**: Centralized user authentication and authorization with built-in security features
 - **Cognito Authorizers**: API Gateway uses Cognito JWT tokens for automatic request authorization
-- **Lambda Functions in VPC**: All Lambda functions operate within a VPC to securely access Aurora Serverless PostgreSQL
+- **Lambda Functions in VPC**: All Lambda functions operate within a VPC to securely access RDS PostgreSQL
 - **Connection Pooling**: Use RDS Proxy for efficient database connection management across Lambda invocations
-- **Stateless Design**: Each Lambda function is stateless, with user state managed by Cognito and data persisted in Aurora PostgreSQL
+- **Stateless Design**: Each Lambda function is stateless, with user state managed by Cognito and data persisted in RDS PostgreSQL
 - **Event-Driven**: Functions respond to API Gateway events and Cognito triggers
-- **Auto-Scaling Database**: Aurora Serverless v2 scales from 0 ACU to handle variable workloads automatically
+- **Auto-Scaling Database**: RDS PostgreSQL v2 scales from 0 ACU to handle variable workloads automatically
 - **Direct Lambda Deployment**: CI/CD pipeline deploys directly to Lambda functions without intermediate deployment services, optimizing for Always Free tier usage
 
 ## AWS Cognito Configuration
@@ -1399,9 +1399,11 @@ interface TermPayload {
 
 ## Data Models
 
-### Database Schema (Aurora Serverless PostgreSQL)
+### Database Schema (RDS PostgreSQL)
 
 **See**: [Data Model Documentation](./datamodel.md) for comprehensive database design, query patterns, and deployment strategies.
+
+**Database Decision**: The system uses **RDS PostgreSQL (db.t4g.micro)** instead of Aurora Serverless due to AWS Free Tier constraints. Aurora Serverless PostgreSQL is not included in the AWS Free Tier, while RDS PostgreSQL db.t4g.micro provides 750 hours/month free for 12 months with 20GB storage.
 
 ```sql
 -- Users table
@@ -1639,7 +1641,7 @@ interface ErrorResponse {
 - **Answer Evaluation**: Fallback to simpler string matching if ML service fails (see [Model Interface](./model_interface.md) for detailed error handling)
 - **Session Management**: Auto-save progress every 30 seconds
 - **Connection Pooling**: RDS Proxy handles connection recovery automatically
-- **Aurora Serverless**: Automatic scaling and self-healing capabilities
+- **RDS PostgreSQL**: Automatic scaling and self-healing capabilities
 - **Model Loading**: Cache model in Lambda container for reuse across invocations
 
 ## Testing Strategy

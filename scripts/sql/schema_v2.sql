@@ -1,20 +1,18 @@
--- Database Schema V2: Tree-based Domain-Agnostic Architecture
+-- Database Schema V2: Tree-based Domain-Agnostic Architecture (Cognito-enabled)
 -- Implements tree_nodes table design for domain-agnostic content management
--- Requirements: 5.1, 6.2, 6.4
+-- Uses AWS Cognito for authentication (no password_hash)
 
 -- Create extensions for UUID and JSONB support
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Users table (updated with proper naming)
+-- Users table (Cognito-integrated)
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    cognito_sub VARCHAR(255) UNIQUE NOT NULL,  -- Cognito user ID (was cognito_user_id)
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
     first_name VARCHAR(100),
     last_name VARCHAR(100),
     is_active BOOLEAN DEFAULT true,
-    is_verified BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_login TIMESTAMP WITH TIME ZONE
@@ -103,6 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_batch_uploads_status ON batch_uploads(status);
 
 -- User table optimization
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_cognito_sub ON users(cognito_sub);
 CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
 
 -- Create updated_at trigger function

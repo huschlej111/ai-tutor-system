@@ -1,447 +1,485 @@
-# Implementation Plan: Know-It-All Tutor System
+# Implementation Tasks: Quiz Engine and Answer Evaluation Deployment
 
 ## Overview
-
-This implementation plan transforms the Know-It-All Tutor system design into a series of incremental development tasks using Python for the backend services and React/TypeScript for the frontend. The system follows a serverless architecture on AWS Lambda with Aurora Serverless PostgreSQL, implementing a domain-agnostic learning platform with semantic answer evaluation.
-
-**Authentication Migration Note**: Task 4.5 implements a migration from custom JWT-based authentication to AWS Cognito User Pool, providing enterprise-grade authentication with MFA and advanced security features. This migration replaces the existing Secrets Manager-based authentication system with Cognito's managed authentication service.
-
-## Tasks
-
-- [x] 1. Set up project infrastructure and core architecture
-  - Create Python project structure with separate Lambda functions
-  - Set up virtual environment and dependency management (requirements.txt)
-  - Configure AWS CDK infrastructure as code for Lambda, API Gateway, and Aurora
-  - Implement database connection pooling and configuration management
-  - Set up environment variable management with AWS Secrets Manager
-  - _Requirements: 5.1, 6.2_
-
-- [x] 1.5 Set up security infrastructure and tooling
-  - [x] 1.5.1 Configure static security analysis tools
-    - Set up Bandit for Python SAST scanning in CI/CD pipeline
-    - Configure Checkov for CDK infrastructure security validation
-    - Implement TruffleHog for secrets detection in repository
-    - Add pip-audit for dependency vulnerability scanning
-    - _Requirements: Security and compliance requirements_
-
-  - [x] 1.5.2 Set up AWS security monitoring
-    - Configure AWS CloudTrail for API call logging
-    - Enable AWS GuardDuty for threat detection
-    - Set up AWS Config rules for compliance monitoring
-    - Configure CloudWatch security metrics and alarms
-    - _Requirements: Security monitoring and incident response_
-
-  - [x] 1.5.3 Implement security-focused secrets management
-    - Configure AWS Secrets Manager rotation policies
-    - Set up IAM roles with least privilege principles
-    - Implement secure environment variable handling
-    - Add encryption at rest and in transit configurations
-    - _Requirements: Data protection and access control_
-
-- [x] 2. Implement database schema and migration system
-  - [x] 2.1 Create PostgreSQL database schema with tree_nodes table design
-    - Implement users, tree_nodes, quiz_sessions, progress_records, and batch_uploads tables
-    - Add proper indexes for performance optimization
-    - Set up UUID generation and JSONB support for domain-agnostic data
-    - _Requirements: 5.1, 6.2, 6.4_
-
-  - [x] 2.2 Write property test for database schema integrity
-    - **Property 5: Data Persistence Round Trip**
-    - **Validates: Requirements 5.1, 5.2**
-
-  - [x] 2.3 Implement database migration Lambda function
-    - Create migration runner with version tracking
-    - Implement rollback capabilities for safe deployments
-    - Add validation for schema changes
-    - _Requirements: 5.1, 5.4_
-
-- [x] 3. Implement authentication service
-  - [x] 3.1 Create user registration and login Lambda function
-    - Implement password hashing with bcrypt
-    - Add email validation and duplicate prevention
-    - Create JWT token generation and validation
-    - _Requirements: 1.1, 1.2, 1.3_
-
-  - [x] 3.2 Write property test for authentication round trip
-    - **Property 1: Authentication Round Trip**
-    - **Validates: Requirements 1.4, 1.6**
-
-  - [x] 3.3 Implement session management and logout functionality
-    - Add token refresh mechanism
-    - Implement secure logout with token invalidation
-    - Add session timeout handling
-    - _Requirements: 1.4, 1.5, 1.6_
-
-  - [x] 3.4 Write unit tests for authentication edge cases
-    - Test invalid credentials, expired tokens, malformed requests
-    - Test password strength validation
-    - _Requirements: 1.3, 1.5_
-
-  - [x] 3.5 Implement authentication security controls
-    - Add rate limiting and brute force protection
-    - Implement account lockout mechanisms
-    - Configure secure password policies and validation
-    - Add multi-factor authentication preparation (TOTP support)
-    - _Requirements: Security hardening and attack prevention_
-
-  - [x] 3.6 Set up authentication security monitoring
-    - Implement security event logging for auth attempts
-    - Add suspicious activity detection and alerting
-    - Configure audit trails for user account changes
-    - Set up automated security incident response triggers
-    - _Requirements: Security monitoring and compliance_
-
-  - [x] 3.7 Write security-focused tests for authentication
-    - Test rate limiting and brute force scenarios
-    - Validate JWT token security properties
-    - Test session hijacking prevention measures
-    - Verify password policy enforcement
-    - _Requirements: Security validation and testing_
-
-- [-] 4.5 Migrate authentication system to AWS Cognito
-  - [x] 4.5.1 Set up AWS Cognito User Pool and User Pool Client
-    - Configure Cognito User Pool with password policies and MFA support
-    - Set up User Pool Client for web application integration
-    - Configure OAuth settings and callback URLs
-    - _Requirements: 1.1, 1.2, 1.8, 1.9_
-
-
-
-  - [x] 4.5.3 Implement Cognito Lambda triggers
-    - Create pre-signup trigger for user validation
-    - Implement post-confirmation trigger for database user profile creation
-    - Add pre-authentication and post-authentication triggers for security logging
-    - _Requirements: 1.2, 1.8_
-
-  - [x] 4.5.4 Replace authentication Lambda with Cognito integration
-    - Rewrite authentication handler to use Cognito APIs instead of custom JWT
-    - Implement user registration using Cognito SignUp API
-    - Replace login logic with Cognito InitiateAuth API
-    - Add email verification and password reset flows using Cognito
-    - _Requirements: 1.1, 1.2, 1.4, 1.5, 1.7, 1.8_
-
-  - [x] 4.5.5 Update API Gateway with Cognito Authorizer
-    - Configure Cognito User Pool Authorizer in API Gateway
-    - Update all protected routes to use Cognito authorization
-    - Remove custom JWT validation middleware
-    - _Requirements: 1.4, 1.6_
-
-  - [x] 4.5.6 Update frontend authentication integration
-    - Replace custom JWT handling with AWS Amplify Auth
-    - Implement Cognito-based login and registration forms
-    - Implement email verification and password reset UI
-    - Add MFA setup and verification interfaces
-    - _Requirements: 1.1, 1.2, 1.7, 1.8, 1.9_
-
-  - [x] 4.5.7 Write property test for Cognito authentication round trip
-    - **Property 1: Cognito Authentication Round Trip**
-    - **Validates: Requirements 1.4, 1.6**
-    - **Status: PASSING** - Fixed LocalStack endpoint conflict with moto mocking
-
-  - [x] 4.5.8 Write integration tests for Cognito features
-    - Test user registration and email verification flow
-    - Test password reset and change password functionality
-    - Test MFA setup and verification processes
-    - Test email delivery and content using MailHog
-    - _Requirements: 1.7, 1.8, 1.9_
-
-  - [x] 4.5.9 Remove legacy authentication components
-    - Remove custom JWT utilities and password hashing functions
-    - Clean up Secrets Manager JWT secret storage
-    - Remove token blacklist table and related functions
-    - Update database schema to remove auth-related tables if no longer needed
-    - _Requirements: System cleanup and security_
-
-- [x] 4. Checkpoint - Ensure authentication and database tests pass
-  - Ensure all tests pass, ask the user if questions arise.
-
-- [x] 5. Implement domain management service
-  - [x] 5.1 Create domain CRUD operations Lambda function
-    - Implement domain creation with tree_nodes table integration
-    - Add domain validation and duplicate prevention
-    - Create domain retrieval with user ownership filtering
-    - _Requirements: 2.1, 2.2, 2.3_
-
-  - [x] 5.2 Write property test for domain creation consistency
-    - **Property 2: Domain Creation and Retrieval Consistency**
-    - **Validates: Requirements 2.2, 2.3, 2.5**
-
-  - [x] 5.3 Implement term management within domains
-    - Add term creation and association with domains
-    - Implement term validation and duplicate detection within domains
-    - Create term retrieval and update operations
-    - _Requirements: 2.2, 2.4_
-
-  - [x] 5.4 Write property test for domain-agnostic processing
-    - **Property 6: Domain-Agnostic Processing Consistency**
-    - **Validates: Requirements 6.1, 6.3**
-
-  - [x] 5.5 Write unit tests for domain validation
-    - Test required field validation, character limits, special characters
-    - Test domain deletion and cascade operations
-    - _Requirements: 2.3, 2.4_
-
-- [x] 6. Implement semantic answer evaluation service
-  - [x] 6.1 Set up sentence transformer model integration
-    - Load the final_similarity_model into Lambda layer
-    - Implement model initialization and caching
-    - Create vector encoding functions for text comparison
-    - _Requirements: 7.1_
-
-  - [x] 6.2 Create answer evaluation Lambda function
-    - Implement semantic similarity calculation using cosine similarity
-    - Add configurable threshold-based evaluation (0.6, 0.7, 0.8)
-    - Create feedback generation based on similarity scores
-    - _Requirements: 7.1, 7.2, 7.3_
-
-  - [x] 6.3 Write property test for evaluation consistency
-    - **Property 8: Semantic Evaluation Consistency**
-    - **Validates: Requirements 7.1, 7.3**
-
-  - [x] 6.4 Write property test for evaluation symmetry
-    - **Property 7: Answer Evaluation Symmetry**
-    - **Validates: Requirements 7.1, 7.2**
-
-  - [x] 6.5 Write unit tests for evaluation edge cases
-    - Test empty answers, very long answers, special characters
-    - Test model loading failures and fallback mechanisms
-    - _Requirements: 7.4_
-
-- [x] 7. Implement quiz engine service
-  - [x] 7.1 Create quiz session management Lambda function
-    - Implement quiz session creation and state tracking
-    - Add question sequencing and progress tracking
-    - Create pause/resume functionality with state persistence
-    - _Requirements: 3.1, 3.5, 3.6_
-
-  - [x] 7.2 Write property test for quiz session state preservation
-    - **Property 3: Quiz Session State Preservation**
-    - **Validates: Requirements 3.5, 3.6**
-
-  - [x] 7.3 Implement quiz question presentation and answer submission
-    - Create question retrieval from domain terms
-    - Integrate with answer evaluation service
-    - Add immediate feedback generation and display
-    - _Requirements: 3.2, 3.3_
-
-  - [x] 7.4 Implement quiz completion and summary generation
-    - Add quiz completion detection and summary calculation
-    - Create performance metrics and statistics
-    - Implement quiz restart functionality
-    - _Requirements: 3.4_
-
-  - [x] 7.5 Write unit tests for quiz state transitions
-    - Test invalid state changes, concurrent access, session timeouts
-    - Test question randomization and completion logic
-    - _Requirements: 3.1, 3.4_
-
-- [x] 8. Checkpoint - Ensure core services tests pass
-  - Ensure all tests pass, ask the user if questions arise.
-
-- [x] 9. Implement progress tracking service
-  - [x] 9.1 Create progress recording Lambda function
-    - Implement attempt recording with similarity scores
-    - Add mastery level calculation based on performance history
-    - Create progress aggregation across domains and terms
-    - _Requirements: 4.1, 4.4, 4.5_
-
-  - [x] 9.2 Write property test for progress monotonicity
-    - **Property 4: Progress Calculation Monotonicity**
-    - **Validates: Requirements 4.4, 4.5**
-
-  - [x] 9.3 Write property test for progress aggregation accuracy
-    - **Property 10: Progress Aggregation Accuracy**
-    - **Validates: Requirements 4.2, 4.3**
-
-  - [x] 9.4 Implement progress dashboard data generation
-    - Create progress overview with completion percentages
-    - Add domain-specific progress breakdowns
-    - Implement learning streak and achievement tracking
-    - _Requirements: 4.2, 4.3_
-
-  - [x] 9.5 Write unit tests for progress calculations
-    - Test edge cases like zero attempts, perfect scores, failing streaks
-    - Test progress data synchronization across sessions
-    - _Requirements: 4.1, 4.4_
-
-- [x] 10. Implement batch upload service
-  - [x] 10.1 Create batch upload validation Lambda function
-    - Implement JSON format validation against the improved schema
-    - Add structural validation for domains and terms
-    - Create duplicate detection within batch uploads
-    - _Requirements: 8.3_
-
-  - [x] 10.2 Write property test for batch upload data integrity
-    - **Property 9: Batch Upload Data Integrity**
-    - **Validates: Requirements 8.3, 8.4**
-    - **Status: PASSING** - Fixed null character handling in generators and database connection context manager usage
-
-  - [x] 10.3 Implement batch domain and term insertion
-    - Create bulk insertion with transaction management
-    - Add error handling and partial failure recovery
-    - Implement upload history tracking
-    - _Requirements: 8.4_
-
-  - [x] 10.4 Write unit tests for batch upload edge cases
-    - Test malformed JSON, missing required fields, oversized uploads
-    - Test transaction rollback on validation failures
-    - _Requirements: 8.1, 8.2_
-
-- [x] 11. Set up API Gateway integration
-  - [x] 11.1 Configure API Gateway routes and Lambda integrations
-    - Set up REST API endpoints for all services
-    - Configure CORS for frontend integration
-    - Add request/response transformation and validation
-    - _Requirements: All API-related requirements_
-
-  - [x] 11.2 Implement API authentication and authorization
-    - Configure Cognito User Pool Authorizer for automatic token validation
-    - Implement role-based access control for admin functions using Cognito groups
-    - Add rate limiting and throttling configuration
-    - _Requirements: 1.4, 8.1_
-
-  - [x] 11.3 Implement API security hardening
-    - Configure security headers (HSTS, CSP, X-Frame-Options)
-    - Add input validation and sanitization middleware
-    - Implement request size limits and timeout controls
-    - Set up API key management for admin endpoints
-    - _Requirements: API security and data protection_
-
-  - [x] 11.4 Set up API security monitoring
-    - Configure API Gateway access logging
-    - Add security-focused CloudWatch metrics
-    - Implement anomaly detection for API usage patterns
-    - Set up automated alerts for security events
-    - _Requirements: Security monitoring and incident response_
-
-  - [x] 11.5 Write integration tests for API endpoints
-    - Test end-to-end API flows with authentication
-    - Test error handling and response formatting
-    - _Requirements: All service integration requirements_
-
-  - [x] 11.6 Write API security tests
-    - Test SQL injection and XSS prevention
-    - Validate rate limiting and DDoS protection
-    - Test authorization bypass scenarios
-    - Verify security header implementation
-    - _Requirements: API security validation_
-
-- [-] 12. Implement frontend React application
-  - [x] 12.1 Set up React project with TypeScript and Tailwind CSS
-    - Create project structure following the design system
-    - Set up routing with React Router for all documented pages
-    - Configure build system with Vite for optimal performance
-    - _Requirements: UI/UX requirements from design_
-
-  - [x] 12.2 Implement authentication components and flows
-    - Create login, registration, and password reset forms using AWS Amplify Auth
-    - Add Cognito token management and automatic refresh
-    - Implement protected route components with Cognito authorization
-    - _Requirements: 1.1, 1.2, 1.6_
-
-  - [x] 12.3 Create dashboard and domain management interface
-    - Implement progress overview dashboard with charts
-    - Create domain library with search and filtering
-    - Add domain creation and editing forms
-    - _Requirements: 2.1, 2.5, 4.2_
-
-  - [x] 12.4 Implement quiz interface with real-time feedback
-    - Create quiz question display with progress indicators
-    - Add answer input with immediate evaluation feedback
-    - Implement pause/resume functionality with state persistence
-    - _Requirements: 3.2, 3.3, 3.5_
-
-  - [x] 12.5 Create admin panel for batch uploads
-    - Implement file upload interface with drag-and-drop
-    - Add upload validation and progress tracking
-    - Create upload history and management interface
-    - _Requirements: 8.1, 8.2_
-
-  - [x] 12.6 Write frontend component tests
-    - Test user interactions, form validation, error handling
-    - Test accessibility compliance and keyboard navigation
-    - _Requirements: All UI/UX requirements_
-
-- [x] 13. Checkpoint - Ensure full system integration tests pass
-  - Ensure all tests pass, ask the user if questions arise.
-
-- [x] 14. Set up CI/CD pipeline and deployment
-  - [x] 14.1 Configure AWS CodePipeline for automated deployment
-    - Set up GitHub integration with branch-based deployments
-    - Configure CodeBuild for testing and packaging
-    - Add deployment stages for development and production
-    - _Requirements: Deployment and infrastructure requirements_
-
-  - [x] 14.2 Implement infrastructure as code with AWS CDK
-    - Create CDK stacks for all AWS resources including Cognito User Pool
-    - Configure Cognito User Pool, User Pool Client, and Identity Providers
-    - Configure Aurora Serverless with proper scaling settings
-    - Set up Lambda layers for the ML model and shared utilities
-    - Add Cognito authorizers to API Gateway configuration
-    - _Requirements: Infrastructure and scalability requirements_
-
-  - [x] 14.3 Configure monitoring and alerting
-    - Set up CloudWatch metrics and alarms
-    - Add cost monitoring and budget alerts
-    - Configure error tracking and performance monitoring
-    - _Requirements: Operational requirements_
-
-- [x] 14.4 Write deployment validation tests
-  - Test infrastructure provisioning and health checks
-  - Test rollback procedures and disaster recovery
-  - _Requirements: System reliability requirements_
-
-- [ ] 15. Final system validation and optimization
-  - [ ] 15.1 Perform end-to-end system testing
-    - Test complete user journeys from registration to quiz completion
-    - Validate all correctness properties with comprehensive test runs
-    - Test system performance under load
-    - _Requirements: All system requirements_
-
-  - [ ] 15.2 Optimize performance and cost efficiency
-    - Tune Lambda memory allocation and timeout settings
-    - Optimize Aurora Serverless scaling configuration
-    - Implement caching strategies for frequently accessed data
-    - _Requirements: Performance and cost requirements_
-
-  - [ ] 15.3 Conduct comprehensive security assessment
-    - Run OWASP ZAP dynamic security testing against all endpoints
-    - Perform infrastructure security validation with AWS Config
-    - Execute dependency vulnerability scans and remediation
-    - Conduct threat modeling validation and security architecture review
-    - _Requirements: Security validation and compliance_
-
-  - [ ] 15.4 Perform security penetration testing
-    - Test authentication and authorization bypass scenarios
-    - Validate input sanitization and injection prevention
-    - Test session management and token security
-    - Verify data encryption and secure communication
-    - _Requirements: Security penetration testing and validation_
-
-  - [ ] 15.5 Conduct accessibility and compliance audits
-    - Validate WCAG 2.1 AA compliance
-    - Test data privacy and protection measures
-    - Verify audit logging and compliance reporting
-    - Review security incident response procedures
-    - _Requirements: Accessibility and regulatory compliance_
-
-- [ ] 16. Final checkpoint - Complete system validation
-  - Ensure all tests pass, ask the user if questions arise.
+This task list implements the Quiz Engine and Answer Evaluation system deployment as specified in `kiro-specs/quiz-engine-deployment/requirements.md`. The implementation follows an incremental deployment strategy with 5 phases to minimize risk and enable rollback.
+
+---
+
+## Phase 1: ML Model Layer Deployment
+
+### Task 1.1: Create ML Model Layer Build Script
+- [ ] Create `scripts/build_ml_layer.sh` script
+- [ ] Implement directory structure creation (layer/ml_model, layer/python)
+- [ ] Add model file copying from final_similarity_model/
+- [ ] Add Python dependency installation (sentence-transformers==2.2.2, torch==2.0.1, transformers==4.30.2, scikit-learn==1.3.0, numpy==1.24.3)
+- [ ] Add zip file creation logic
+- [ ] Add S3 upload command for layers >50MB
+- [ ] Add Lambda layer version publishing command
+- [ ] Make script executable (chmod +x)
+
+**Validates:** Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
+
+### Task 1.2: Build and Deploy ML Model Layer
+- [ ] Run build_ml_layer.sh script
+- [ ] Verify layer size is ~200MB
+- [ ] Verify S3 upload successful
+- [ ] Verify Lambda layer version published
+- [ ] Record layer ARN for use in CDK stack
+- [ ] Test layer can be attached to Python 3.12 Lambda
+
+**Validates:** Requirements 3.1, 3.5, 3.6
+
+---
+
+## Phase 2: Database Schema Migration
+
+### Task 2.1: Create Database Migration Script
+- [ ] Create `scripts/migrate_quiz_schema.py` script
+- [ ] Implement QuizSchemaMigration class with __init__ method
+- [ ] Implement validate_schema() method to check for quiz_sessions table
+- [ ] Implement validate_schema() method to check for progress_records table
+- [ ] Implement validate_schema() method to check for tree_nodes indexes
+- [ ] Implement apply_migration() method to create quiz_sessions table
+- [ ] Implement apply_migration() method to create progress_records table
+- [ ] Implement apply_migration() method to create all required indexes
+- [ ] Implement verify_db_proxy_permissions() method
+- [ ] Add error handling and rollback logic
+- [ ] Add clear error messages for missing components
+
+**Validates:** Requirements 6.1, 6.2, 6.3, 6.4, 6.5
+
+### Task 2.2: Execute Database Migration
+- [ ] Run migration script in validation mode (--validate)
+- [ ] Review validation results
+- [ ] Run migration script in apply mode (--apply)
+- [ ] Verify quiz_sessions table created with correct schema
+- [ ] Verify progress_records table created with correct schema
+- [ ] Verify all indexes created successfully
+- [ ] Verify DB Proxy has permissions for quiz tables
+- [ ] Document migration results
+
+**Validates:** Requirements 6.1, 6.2, 6.3, 6.5
+
+---
+
+## Phase 3: Answer Evaluator Lambda Deployment
+
+### Task 3.1: Implement Answer Evaluator Handler
+- [ ] Create `src/lambda_functions/answer_evaluator/handler.py`
+- [ ] Implement AnswerEvaluator class with __init__ method
+- [ ] Implement _load_model() method to load sentence transformer from /opt/ml_model
+- [ ] Implement evaluate_answer() method with text encoding and cosine similarity
+- [ ] Implement batch_evaluate() method for multiple answer pairs
+- [ ] Implement health_check() method to verify model loaded
+- [ ] Implement _generate_feedback() method with graduated feedback (>=threshold, 0.6-threshold, <0.6)
+- [ ] Implement main() Lambda handler function
+- [ ] Add request validation and error handling
+- [ ] Add structured logging for evaluation requests
+
+**Validates:** Requirements 2.1, 2.2, 2.4, 2.5, 7.4, 10.2
+
+### Task 3.2: Create Answer Evaluator Lambda in CDK Stack
+- [ ] Open `infrastructure/stacks/auth_only_stack.py`
+- [ ] Add _create_answer_evaluator_lambda() method
+- [ ] Configure Lambda with Python 3.12 runtime
+- [ ] Set memory to 512MB and timeout to 60 seconds
+- [ ] Deploy outside VPC
+- [ ] Attach Shared Layer and ML Model Layer
+- [ ] Set environment variables (MODEL_PATH, SIMILARITY_THRESHOLD, DB_PROXY_FUNCTION_NAME, LOG_LEVEL)
+- [ ] Grant permission to invoke DB Proxy Lambda
+- [ ] Add CloudWatch Logs permissions
+- [ ] Call method from __init__
+
+**Validates:** Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6
+
+### Task 3.3: Test Answer Evaluator Lambda
+- [ ] Deploy CDK stack with Answer Evaluator
+- [ ] Invoke health_check endpoint
+- [ ] Verify model loads successfully
+- [ ] Test evaluate_answer with sample inputs
+- [ ] Verify similarity scores in range [0.0, 1.0]
+- [ ] Verify feedback generation works correctly
+- [ ] Test batch_evaluate with multiple answer pairs
+- [ ] Verify CloudWatch logs contain evaluation requests
+
+**Validates:** Requirements 2.7, 5.3, 7.4, 10.2
+
+---
+
+## Phase 4: Quiz Engine Lambda Deployment
+
+### Task 4.1: Extend DB Proxy with Quiz Operations
+- [ ] Open existing DB Proxy handler file
+- [ ] Implement create_quiz_session(session_data) method
+- [ ] Implement get_quiz_session(session_id) method
+- [ ] Implement update_quiz_session(session_id, updates) method
+- [ ] Implement delete_quiz_session(session_id) method
+- [ ] Implement get_domain_terms(domain_id) method
+- [ ] Implement record_progress(progress_data) method
+- [ ] Implement get_user_progress(user_id, domain_id) method
+- [ ] Add error handling for database operations
+- [ ] Deploy updated DB Proxy Lambda
+
+**Validates:** Requirements 1.6, 2.6, 6.5, 7.5
+
+### Task 4.2: Implement Quiz Engine Handler
+- [ ] Create `src/lambda_functions/quiz_engine/handler.py`
+- [ ] Implement QuizEngine class with __init__ method
+- [ ] Implement start_quiz(user_id, domain_id) method
+- [ ] Implement get_next_question(session_id) method
+- [ ] Implement submit_answer(session_id, term_id, student_answer) method
+- [ ] Implement pause_quiz(session_id) method
+- [ ] Implement resume_quiz(session_id) method
+- [ ] Implement get_session(session_id) method
+- [ ] Implement delete_session(session_id) method
+- [ ] Implement main() Lambda handler function
+- [ ] Add session ownership validation
+- [ ] Add domain access validation
+- [ ] Add request validation
+- [ ] Add structured logging for session state transitions
+
+**Validates:** Requirements 1.1, 1.5, 1.6, 7.2, 7.3, 10.1, 11.1
+
+### Task 4.3: Implement Security Validation
+- [ ] Create `src/lambda_functions/quiz_engine/security.py`
+- [ ] Implement SessionSecurityValidator class
+- [ ] Implement validate_session_ownership(session_id, user_id) method
+- [ ] Implement validate_domain_access(domain_id, user_id) method
+- [ ] Add error handling for unauthorized access
+- [ ] Integrate security validation into Quiz Engine handler
+
+**Validates:** Requirements 11.1, 11.2, 11.4
+
+### Task 4.4: Implement Request Validation
+- [ ] Create `src/lambda_functions/quiz_engine/validation.py`
+- [ ] Implement RequestValidator class
+- [ ] Implement validate_start_quiz_request(body) method
+- [ ] Implement validate_submit_answer_request(body) method
+- [ ] Implement validate_evaluate_request(body) method
+- [ ] Add UUID validation
+- [ ] Add answer length validation (max 1000 characters)
+- [ ] Add threshold validation (0.0 to 1.0)
+- [ ] Integrate request validation into Quiz Engine handler
+
+**Validates:** Requirements 11.2, 11.4
+
+### Task 4.5: Create Quiz Engine Lambda in CDK Stack
+- [ ] Open `infrastructure/stacks/auth_only_stack.py`
+- [ ] Add _create_quiz_engine_lambda() method
+- [ ] Configure Lambda with Python 3.12 runtime
+- [ ] Set memory to 256MB and timeout to 30 seconds
+- [ ] Deploy outside VPC
+- [ ] Attach Shared Layer
+- [ ] Set environment variables (DB_PROXY_FUNCTION_NAME, LOG_LEVEL, REGION)
+- [ ] Grant permission to invoke DB Proxy Lambda
+- [ ] Grant permission to invoke Answer Evaluator Lambda
+- [ ] Add CloudWatch Logs permissions
+- [ ] Call method from __init__
+
+**Validates:** Requirements 1.1, 1.2, 1.3, 1.4, 1.5, 1.6
+
+### Task 4.6: Test Quiz Engine Lambda
+- [ ] Deploy CDK stack with Quiz Engine
+- [ ] Test start_quiz endpoint with valid domain_id
+- [ ] Verify quiz session created in database
+- [ ] Test get_next_question endpoint
+- [ ] Verify question returned with correct format
+- [ ] Test submit_answer endpoint
+- [ ] Verify Answer Evaluator invoked successfully
+- [ ] Verify progress recorded in database
+- [ ] Test pause_quiz and resume_quiz endpoints
+- [ ] Test get_session and delete_session endpoints
+- [ ] Verify CloudWatch logs contain session state transitions
+
+**Validates:** Requirements 1.7, 7.2, 7.3, 7.5, 10.1
+
+---
+
+## Phase 5: API Gateway Integration
+
+### Task 5.1: Create Quiz Operations API Routes
+- [ ] Open `infrastructure/stacks/auth_only_stack.py`
+- [ ] Add _create_quiz_api_routes() method
+- [ ] Create /quiz resource under existing API Gateway
+- [ ] Create POST /quiz/start endpoint with Lambda integration
+- [ ] Create GET /quiz/question endpoint with Lambda integration
+- [ ] Create POST /quiz/answer endpoint with Lambda integration
+- [ ] Create POST /quiz/pause endpoint with Lambda integration
+- [ ] Create POST /quiz/resume endpoint with Lambda integration
+- [ ] Create GET /quiz/session/{sessionId} endpoint with Lambda integration
+- [ ] Create DELETE /quiz/session/{sessionId} endpoint with Lambda integration
+- [ ] Attach Cognito authorizer to all quiz endpoints
+- [ ] Configure CORS for all quiz endpoints
+- [ ] Call method from __init__
+
+**Validates:** Requirements 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10
+
+### Task 5.2: Create Answer Evaluation API Routes
+- [ ] Open `infrastructure/stacks/auth_only_stack.py`
+- [ ] Add _create_evaluation_api_routes() method
+- [ ] Create POST /quiz/evaluate endpoint with Lambda integration
+- [ ] Create POST /quiz/evaluate/batch endpoint with Lambda integration
+- [ ] Create GET /quiz/evaluate/health endpoint with Lambda integration
+- [ ] Attach Cognito authorizer to /quiz/evaluate and /quiz/evaluate/batch
+- [ ] Leave /quiz/evaluate/health without authentication
+- [ ] Configure CORS for all evaluation endpoints
+- [ ] Call method from __init__
+
+**Validates:** Requirements 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
+
+### Task 5.3: Deploy API Gateway Changes
+- [ ] Deploy CDK stack with API Gateway routes
+- [ ] Verify all routes created successfully
+- [ ] Verify Cognito authorizer attached to protected routes
+- [ ] Verify CORS configured correctly
+- [ ] Record API Gateway URL for testing
+- [ ] Test unauthenticated request to protected route (should return 401)
+- [ ] Test authenticated request to protected route (should succeed)
+
+**Validates:** Requirements 4.9, 4.10, 5.4, 5.5, 5.6, 11.2, 11.6
+
+---
+
+## Phase 6: Monitoring and Logging
+
+### Task 6.1: Create CloudWatch Monitoring Configuration
+- [ ] Create `infrastructure/monitoring/quiz_monitoring.py`
+- [ ] Implement QuizMonitoring class with __init__ method
+- [ ] Create SNS topic for alerts
+- [ ] Implement _create_lambda_metrics() method for Quiz Engine
+- [ ] Implement _create_lambda_metrics() method for Answer Evaluator
+- [ ] Implement _create_alarms() method for Quiz Engine error rate
+- [ ] Implement _create_alarms() method for Quiz Engine duration
+- [ ] Implement _create_alarms() method for Answer Evaluator error rate
+- [ ] Implement _create_alarms() method for Answer Evaluator duration
+- [ ] Implement _create_dashboard() method with all metrics
+- [ ] Integrate monitoring into CDK stack
+
+**Validates:** Requirements 10.3, 10.4, 10.5, 10.6
+
+### Task 6.2: Implement Structured Logging
+- [ ] Create `src/lambda_functions/quiz_engine/logger.py`
+- [ ] Implement QuizLogger class with __init__ method
+- [ ] Implement log_session_event() method for state transitions
+- [ ] Implement log_evaluation() method for answer evaluations
+- [ ] Implement log_error() method with context
+- [ ] Integrate logger into Quiz Engine handler
+- [ ] Integrate logger into Answer Evaluator handler
+- [ ] Configure CloudWatch log groups with 7-day retention
+
+**Validates:** Requirements 10.1, 10.2, 10.3
+
+### Task 6.3: Deploy Monitoring Configuration
+- [ ] Deploy CDK stack with monitoring configuration
+- [ ] Verify CloudWatch log groups created
+- [ ] Verify CloudWatch alarms created
+- [ ] Verify CloudWatch dashboard created
+- [ ] Verify SNS topic created for alerts
+- [ ] Test alarm triggers with simulated errors
+- [ ] Record CloudWatch dashboard URL
+
+**Validates:** Requirements 10.4, 10.5, 10.6
+
+---
+
+## Phase 7: Testing and Validation
+
+### Task 7.1: Create Integration Test Script
+- [ ] Create `scripts/test_quiz_deployment.py`
+- [ ] Implement QuizDeploymentTests class with __init__ method
+- [ ] Implement authenticate() method for Cognito authentication
+- [ ] Implement test_start_quiz() method
+- [ ] Implement test_get_question() method
+- [ ] Implement test_submit_answer() method
+- [ ] Implement test_pause_resume_quiz() method
+- [ ] Implement test_answer_evaluator_health() method
+- [ ] Implement test_semantic_evaluation() method with test cases
+- [ ] Implement test_db_proxy_integration() method
+- [ ] Implement run_all_tests() method
+- [ ] Add diagnostic information for test failures
+
+**Validates:** Requirements 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
+
+### Task 7.2: Execute Integration Tests
+- [ ] Run test_quiz_deployment.py script
+- [ ] Verify all tests pass
+- [ ] Review test output for any warnings
+- [ ] Fix any issues identified by tests
+- [ ] Re-run tests to confirm fixes
+- [ ] Document test results
+
+**Validates:** Requirements 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
+
+### Task 7.3: Create Property-Based Tests
+- [ ] Create `tests/property_tests/test_quiz_properties.py`
+- [ ] Implement QuizSessionStateMachine for state testing
+- [ ] Implement test_evaluation_consistency property test
+- [ ] Implement test_evaluation_symmetry property test
+- [ ] Implement test_session_persistence_round_trip property test
+- [ ] Implement test_progress_calculation_monotonicity property test
+- [ ] Run property-based tests with 100+ examples
+- [ ] Verify all properties hold
+
+**Validates:** Requirements 7.1, 7.4
+
+---
+
+## Phase 8: Security and IAM Configuration
+
+### Task 8.1: Create IAM Policies
+- [ ] Create `infrastructure/security/quiz_iam_policies.py`
+- [ ] Implement QuizIAMPolicies class
+- [ ] Implement create_quiz_engine_policy() method (least-privilege)
+- [ ] Implement create_answer_evaluator_policy() method (least-privilege)
+- [ ] Implement create_cloudwatch_logs_policy() method
+- [ ] Integrate IAM policies into CDK stack
+- [ ] Verify Lambda functions have only required permissions
+
+**Validates:** Requirements 11.3, 11.4, 11.5
+
+### Task 8.2: Configure Encryption
+- [ ] Verify HTTPS/TLS enabled on API Gateway
+- [ ] Verify RDS encryption at rest enabled
+- [ ] Verify CloudWatch Logs encryption enabled
+- [ ] Verify S3 bucket encryption enabled for ML model layer
+- [ ] Document encryption configuration
+
+**Validates:** Requirements 11.6, 11.7
+
+---
+
+## Phase 9: Cost Optimization
+
+### Task 9.1: Configure Lambda Concurrency Limits
+- [ ] Open `infrastructure/stacks/auth_only_stack.py`
+- [ ] Add _configure_concurrency_limits() method
+- [ ] Set Quiz Engine reserved concurrent executions to 10
+- [ ] Set Answer Evaluator reserved concurrent executions to 5
+- [ ] Call method from __init__
+- [ ] Deploy CDK stack with concurrency limits
+
+**Validates:** Requirement 9.6
+
+### Task 9.2: Create Cost Monitoring Script
+- [ ] Create `scripts/monitor_costs.py`
+- [ ] Implement CostMonitor class with __init__ method
+- [ ] Implement get_monthly_costs() method using Cost Explorer API
+- [ ] Implement check_free_tier_usage() method for Lambda, API Gateway, RDS
+- [ ] Implement _get_lambda_invocations() method
+- [ ] Implement _get_lambda_compute_time() method
+- [ ] Implement _get_api_gateway_requests() method
+- [ ] Implement generate_cost_report() method
+- [ ] Run cost monitoring script
+- [ ] Verify costs within free tier limits
+
+**Validates:** Requirements 9.1, 9.2, 9.3, 9.4, 9.5
+
+---
+
+## Phase 10: Deployment Rollback Capability
+
+### Task 10.1: Create Rollback Script
+- [ ] Create `scripts/rollback_quiz_deployment.py`
+- [ ] Implement QuizDeploymentRollback class with __init__ method
+- [ ] Implement rollback_lambda_functions() method
+- [ ] Implement rollback_api_gateway() method
+- [ ] Implement rollback_database_migration() method (conservative, preserves data)
+- [ ] Add version tagging to all resources
+- [ ] Test rollback procedure in non-production environment
+- [ ] Document rollback procedures
+
+**Validates:** Requirements 8.1, 8.2, 8.3, 8.4, 8.5
+
+---
+
+## Phase 11: Documentation and Frontend Integration
+
+### Task 11.1: Create API Documentation
+- [ ] Create `docs/api/quiz-endpoints.yaml` OpenAPI specification
+- [ ] Document all quiz operation endpoints
+- [ ] Document all answer evaluation endpoints
+- [ ] Document request/response schemas
+- [ ] Document authentication requirements
+- [ ] Document error codes and messages
+- [ ] Generate Swagger UI documentation
+
+**Validates:** Requirements 12.3, 12.4, 12.5
+
+### Task 11.2: Create Frontend Integration Examples
+- [ ] Create `frontend/src/services/quizService.ts` API client
+- [ ] Implement QuizService class with all API methods
+- [ ] Create `frontend/src/components/QuizInterface.tsx` React component
+- [ ] Implement quiz workflow UI (start, question, answer, pause, resume)
+- [ ] Add error handling and loading states
+- [ ] Create example code snippets for documentation
+- [ ] Document API Gateway URL and authentication
+
+**Validates:** Requirements 12.1, 12.2, 12.6
+
+---
+
+## Phase 12: Final Validation and Deployment
+
+### Task 12.1: Execute End-to-End Test
+- [ ] Start quiz session via API
+- [ ] Get first question
+- [ ] Submit answer and verify evaluation
+- [ ] Get next question
+- [ ] Pause quiz session
+- [ ] Resume quiz session
+- [ ] Complete quiz session
+- [ ] Verify all progress recorded in database
+- [ ] Verify CloudWatch logs contain all events
+- [ ] Verify CloudWatch metrics updated
+
+**Validates:** All requirements
+
+### Task 12.2: Create Deployment Documentation
+- [ ] Document deployment phases and sequence
+- [ ] Document validation checklist for each phase
+- [ ] Document rollback procedures
+- [ ] Document monitoring and alerting setup
+- [ ] Document cost optimization configuration
+- [ ] Document troubleshooting guide
+- [ ] Create deployment runbook
+
+**Validates:** Requirement 13.6
+
+### Task 12.3: Production Deployment
+- [ ] Review all test results
+- [ ] Review cost estimates
+- [ ] Review security configuration
+- [ ] Deploy to production environment
+- [ ] Execute production validation tests
+- [ ] Monitor CloudWatch metrics for 24 hours
+- [ ] Document production deployment results
+
+**Validates:** Requirements 13.1, 13.2, 13.3, 13.4, 13.5
+
+---
+
+## Deployment Validation Checklist
+
+- [ ] ML Model Layer published and versioned
+- [ ] Database schema migrated successfully
+- [ ] Answer Evaluator Lambda created and health check passes
+- [ ] Quiz Engine Lambda created and DB Proxy invocation works
+- [ ] API Gateway routes created with Cognito authorizer
+- [ ] CORS configured on all routes
+- [ ] End-to-end test: start quiz → get question → submit answer → receive evaluation
+- [ ] CloudWatch monitoring and alarms configured
+- [ ] Rollback procedures documented and tested
+- [ ] Cost estimates within free tier limits
+- [ ] Security validation complete (IAM, encryption, access control)
+- [ ] API documentation published
+- [ ] Frontend integration examples provided
+
+---
 
 ## Notes
 
-- Tasks are organized into logical phases with checkpoints for validation
-- Each task references specific requirements for traceability
-- **Authentication Migration**: Task 4.5 migrates from custom JWT authentication to AWS Cognito User Pool, providing enterprise-grade security, MFA, and managed user lifecycle
-- Property-based tests validate universal correctness properties using fast-check library
-- Unit tests validate specific examples and edge cases
-- Security tasks are integrated throughout the development lifecycle following DevSecOps principles
-- Static security analysis tools (Bandit, Checkov, TruffleHog) run automatically in CI/CD pipeline
-- AWS security services (CloudTrail, GuardDuty, Config, Cognito) provide comprehensive monitoring and authentication
-- Security testing includes both automated scanning and manual penetration testing
-- The implementation uses Python 3.11 for Lambda functions and React 18+ with TypeScript for the frontend
-- Frontend authentication uses AWS Amplify Auth library for seamless Cognito integration
-- All services are designed to work within AWS Always Free tier limits (Cognito provides 50,000 MAUs free)
-- The semantic answer evaluation uses the existing final_similarity_model for intelligent feedback
-- Database operations use connection pooling for optimal performance in serverless environment
-- API Gateway uses Cognito User Pool Authorizers for automatic JWT token validation
+- All tasks should be executed in the order specified
+- Each phase should be validated before proceeding to the next
+- Rollback capability should be tested before production deployment
+- Cost monitoring should be performed after each phase
+- Security validation should be performed throughout the deployment process

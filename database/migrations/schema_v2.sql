@@ -1,0 +1,1 @@
+../../scripts/sql/schema_v2.sql

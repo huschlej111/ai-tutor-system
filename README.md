@@ -44,6 +44,13 @@ To empower students of any subject by providing an interactive, web-based learni
 └── README.md                          # This file
 ```
 
+## 🌐 Live Environments
+
+### Development Environment
+- **Frontend URL**: https://d1o8fugfe04j49.cloudfront.net
+- **API URL**: https://o06264kkzj.execute-api.us-east-1.amazonaws.com/prod/
+- **Status**: Active (AWS Free Tier)
+
 ## 🚀 Key Features
 
 ### For Students
