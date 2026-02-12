@@ -323,4 +323,4 @@ test_simple_lambda.py
 
 # Lock files
 .~lock.*
-*.lock#
+*.lock#kiro-specs

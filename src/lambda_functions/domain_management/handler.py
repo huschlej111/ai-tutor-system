@@ -1,638 +1,468 @@
 """
-Domain Management Lambda Function Handler
-Handles CRUD operations for knowledge domains and terms
-Requirements: 2.1, 2.2, 2.3, 2.4
+Domain Management Lambda Function Handler (Refactored for Lambda Bridge)
+Handles CRUD operations for knowledge domains and terms using DB Proxy
 """
 import json
-import uuid
+import sys
+import os
 import logging
-from typing import Dict, Any, List, Optional
-from shared.database import get_db_cursor, execute_query, execute_query_one
-from shared.response_utils import (
-    create_success_response, create_created_response, create_error_response,
-    create_validation_error_response, create_not_found_response,
-    parse_request_body, get_path_parameters, get_query_parameters,
-    handle_error
-)
-from shared.auth_utils import extract_user_from_cognito_event
+from typing import Dict, Any
+
+# Add shared modules to path
+sys.path.append('/opt/python')
+
+from db_proxy_client import DBProxyClient
+from response_utils import create_success_response, create_created_response, create_error_response
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Initialize DB Proxy client
+db_proxy = DBProxyClient(os.environ.get('DB_PROXY_FUNCTION_NAME'))
 
 
-def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def lambda_handler(event, context):
     """
     Main handler for domain management operations
+    Routes:
+    - POST /domains - Create new domain
+    - GET /domains - List user's domains
+    - GET /domains/{id} - Get specific domain
+    - PUT /domains/{id} - Update domain
+    - DELETE /domains/{id} - Delete domain
+    - POST /domains/{id}/terms - Add terms to domain
+    - GET /domains/{id}/terms - Get domain terms
     """
     try:
         http_method = event.get('httpMethod')
         path = event.get('path', '')
         
-        # Verify authentication for all domain operations using Cognito
-        auth_result = extract_user_from_cognito_event(event)
-        if not auth_result['valid']:
-            return create_error_response(401, 'Unauthorized')
+        # Extract user from Cognito authorizer
+        authorizer = event.get('requestContext', {}).get('authorizer', {})
+        claims = authorizer.get('claims', {})
+        cognito_sub = claims.get('sub')
         
-        user_id = auth_result['user_id']
+        if not cognito_sub:
+            return create_error_response(401, 'Unauthorized - No user identity found')
         
-        if http_method == 'POST':
-            if path.endswith('/domains'):
-                return handle_create_domain(event, user_id)
-            elif '/domains/' in path and path.endswith('/terms'):
-                return handle_add_terms(event, user_id)
-        elif http_method == 'GET':
-            if path.endswith('/domains'):
-                return handle_get_domains(event, user_id)
-            elif '/domains/' in path and not path.endswith('/terms'):
-                return handle_get_domain(event, user_id)
-            elif '/domains/' in path and path.endswith('/terms'):
-                return handle_get_terms(event, user_id)
-        elif http_method == 'PUT':
-            if '/domains/' in path and not path.endswith('/terms'):
-                return handle_update_domain(event, user_id)
-            elif '/domains/' in path and '/terms/' in path:
-                return handle_update_term(event, user_id)
-        elif http_method == 'DELETE':
-            if '/domains/' in path and not path.endswith('/terms'):
-                return handle_delete_domain(event, user_id)
-            elif '/domains/' in path and '/terms/' in path:
-                return handle_delete_term(event, user_id)
+        # Get user_id from database
+        user_result = db_proxy.execute_query(
+            "SELECT id FROM users WHERE cognito_sub = %s",
+            params=[cognito_sub],
+            return_dict=True
+        )
         
-        return create_error_response(404, 'Endpoint not found')
+        if not user_result or len(user_result) == 0:
+            return create_error_response(404, 'User not found')
         
+        user_id = user_result[0]['id']
+        
+        # Route to appropriate handler
+        if http_method == 'POST' and path.endswith('/domains'):
+            return handle_create_domain(event, user_id)
+        elif http_method == 'GET' and path.endswith('/domains'):
+            return handle_get_domains(user_id)
+        elif http_method == 'GET' and '/domains/' in path and not '/terms' in path:
+            return handle_get_domain(event, user_id)
+        elif http_method == 'PUT' and '/domains/' in path:
+            return handle_update_domain(event, user_id)
+        elif http_method == 'DELETE' and '/domains/' in path:
+            return handle_delete_domain(event, user_id)
+        elif http_method == 'POST' and '/terms' in path:
+            return handle_add_terms(event, user_id)
+        elif http_method == 'GET' and '/terms' in path:
+            return handle_get_terms(event, user_id)
+        else:
+            return create_error_response(404, 'Endpoint not found')
+            
     except Exception as e:
-        logger.error(f"Domain management error: {str(e)}")
-        return handle_error(e)
+        logger.error(f"Domain management error: {e}", exc_info=True)
+        return create_error_response(500, f'Internal server error: {str(e)}')
 
 
-def handle_create_domain(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """
-    Handle domain creation with tree_nodes table integration
-    Requirements: 2.1, 2.2
-    """
+def handle_create_domain(event, user_id):
+    """Create a new domain"""
     try:
-        body = parse_request_body(event)
+        body = json.loads(event.get('body', '{}'))
         
-        # Validate required fields
-        validation_errors = {}
-        if not body.get('name'):
-            validation_errors['name'] = 'Domain name is required'
-        if not body.get('description'):
-            validation_errors['description'] = 'Domain description is required'
-            
-        if validation_errors:
-            return create_validation_error_response(validation_errors)
+        name = body.get('name', '').strip()
+        description = body.get('description', '').strip()
         
-        name = body['name'].strip()
-        description = body['description'].strip()
+        if not name or not description:
+            return create_error_response(400, 'Name and description are required')
         
-        # Additional validation
         if len(name) < 2 or len(name) > 100:
-            validation_errors['name'] = 'Domain name must be between 2 and 100 characters'
-        if len(description) < 10 or len(description) > 500:
-            validation_errors['description'] = 'Domain description must be between 10 and 500 characters'
-            
-        if validation_errors:
-            return create_validation_error_response(validation_errors)
+            return create_error_response(400, 'Name must be between 2 and 100 characters')
         
-        # Check for duplicate domain names for this user
-        existing_domain = execute_query_one(
+        if len(description) < 10 or len(description) > 500:
+            return create_error_response(400, 'Description must be between 10 and 500 characters')
+        
+        # Check for duplicate
+        existing = db_proxy.execute_query(
             """
             SELECT id FROM tree_nodes 
             WHERE user_id = %s AND node_type = 'domain' 
             AND data->>'name' = %s
             """,
-            (user_id, name)
+            params=[user_id, name],
+            return_dict=True
         )
         
-        if existing_domain:
+        if existing and len(existing) > 0:
             return create_error_response(409, 'Domain with this name already exists')
         
-        # Create domain data structure
-        domain_data = {
-            'name': name,
-            'description': description,
-            'created_by': user_id
-        }
+        # Create domain
+        domain_data = json.dumps({'name': name, 'description': description})
+        metadata = json.dumps(body.get('metadata', {}))
         
-        # Insert domain into tree_nodes table
-        domain_id = str(uuid.uuid4())
-        execute_query(
+        result = db_proxy.execute_query(
             """
-            INSERT INTO tree_nodes (id, user_id, node_type, data, metadata)
-            VALUES (%s, %s, 'domain', %s, %s)
+            INSERT INTO tree_nodes (user_id, node_type, data, metadata)
+            VALUES (%s, 'domain', %s, %s)
+            RETURNING id, data, metadata, created_at
             """,
-            (domain_id, user_id, json.dumps(domain_data), json.dumps({'term_count': 0}))
+            params=[user_id, domain_data, metadata],
+            return_dict=True
         )
         
-        # Return created domain
-        domain = {
-            'id': domain_id,
-            'name': name,
-            'description': description,
-            'term_count': 0,
-            'user_id': user_id
-        }
+        if not result or len(result) == 0:
+            return create_error_response(500, 'Failed to create domain')
         
-        return create_created_response(domain, 'Domain created successfully')
+        domain = result[0]
         
+        return create_created_response({
+            'message': 'Domain created successfully',
+            'domain': {
+                'id': domain['id'],
+                'name': domain['data']['name'],
+                'description': domain['data']['description'],
+                'metadata': domain.get('metadata', {}),
+                'created_at': domain['created_at']
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return create_error_response(400, 'Invalid JSON in request body')
     except Exception as e:
-        logger.error(f"Error creating domain: {str(e)}")
-        return handle_error(e)
+        logger.error(f"Create domain error: {e}", exc_info=True)
+        return create_error_response(500, f'Failed to create domain: {str(e)}')
 
 
-def handle_get_domains(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """
-    Handle retrieving user domains with ownership filtering
-    Requirements: 2.3, 2.5
-    """
+def handle_get_domains(user_id):
+    """Get all domains for user"""
     try:
-        # Get domains for the authenticated user
-        domains = execute_query(
+        domains = db_proxy.execute_query(
             """
             SELECT 
-                tn.id,
-                tn.data->>'name' as name,
-                tn.data->>'description' as description,
-                COALESCE(tn.metadata->>'term_count', '0') as term_count,
-                tn.user_id,
-                tn.created_at,
-                tn.updated_at
-            FROM tree_nodes tn
-            WHERE tn.user_id = %s AND tn.node_type = 'domain'
-            ORDER BY tn.created_at DESC
+                d.id,
+                d.data,
+                d.metadata,
+                d.created_at,
+                d.updated_at,
+                COUNT(t.id) as term_count
+            FROM tree_nodes d
+            LEFT JOIN tree_nodes t ON t.parent_id = d.id AND t.node_type = 'term'
+            WHERE d.user_id = %s AND d.node_type = 'domain'
+            GROUP BY d.id, d.data, d.metadata, d.created_at, d.updated_at
+            ORDER BY d.created_at DESC
             """,
-            (user_id,)
+            params=[user_id],
+            return_dict=True
         )
         
         domain_list = []
         for domain in domains:
             domain_list.append({
-                'id': domain[0],
-                'name': domain[1],
-                'description': domain[2],
-                'term_count': int(domain[3]) if domain[3] else 0,
-                'user_id': domain[4],
-                'created_at': domain[5].isoformat() if domain[5] else None,
-                'updated_at': domain[6].isoformat() if domain[6] else None
+                'id': domain['id'],
+                'name': domain['data']['name'],
+                'description': domain['data']['description'],
+                'metadata': domain.get('metadata', {}),
+                'term_count': domain['term_count'],
+                'created_at': domain['created_at'],
+                'updated_at': domain['updated_at']
             })
         
-        return create_success_response(domain_list)
+        return create_success_response({
+            'domains': domain_list,
+            'count': len(domain_list)
+        })
         
     except Exception as e:
-        logger.error(f"Error retrieving domains: {str(e)}")
-        return handle_error(e)
+        logger.error(f"Get domains error: {e}", exc_info=True)
+        return create_error_response(500, f'Failed to get domains: {str(e)}')
 
 
-def handle_get_domain(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """Handle retrieving a specific domain"""
+def handle_get_domain(event, user_id):
+    """Get specific domain by ID"""
     try:
-        path_params = get_path_parameters(event)
-        domain_id = path_params.get('domain_id')
+        # Extract domain_id from path
+        path = event.get('path', '')
+        domain_id = path.split('/domains/')[-1].split('/')[0]
         
-        if not domain_id:
-            return create_error_response(400, 'Domain ID is required')
-        
-        # Get domain with ownership check
-        domain = execute_query_one(
+        domain = db_proxy.execute_query(
             """
             SELECT 
-                tn.id,
-                tn.data->>'name' as name,
-                tn.data->>'description' as description,
-                COALESCE(tn.metadata->>'term_count', '0') as term_count,
-                tn.user_id,
-                tn.created_at,
-                tn.updated_at
-            FROM tree_nodes tn
-            WHERE tn.id = %s AND tn.user_id = %s AND tn.node_type = 'domain'
+                d.id,
+                d.data,
+                d.metadata,
+                d.created_at,
+                d.updated_at,
+                COUNT(t.id) as term_count
+            FROM tree_nodes d
+            LEFT JOIN tree_nodes t ON t.parent_id = d.id AND t.node_type = 'term'
+            WHERE d.id = %s AND d.user_id = %s AND d.node_type = 'domain'
+            GROUP BY d.id, d.data, d.metadata, d.created_at, d.updated_at
             """,
-            (domain_id, user_id)
+            params=[domain_id, user_id],
+            return_dict=True
         )
         
-        if not domain:
-            return create_not_found_response('Domain not found')
+        if not domain or len(domain) == 0:
+            return create_error_response(404, 'Domain not found')
         
-        domain_data = {
-            'id': domain[0],
-            'name': domain[1],
-            'description': domain[2],
-            'term_count': int(domain[3]) if domain[3] else 0,
-            'user_id': domain[4],
-            'created_at': domain[5].isoformat() if domain[5] else None,
-            'updated_at': domain[6].isoformat() if domain[6] else None
-        }
+        d = domain[0]
         
-        return create_success_response(domain_data)
+        return create_success_response({
+            'domain': {
+                'id': d['id'],
+                'name': d['data']['name'],
+                'description': d['data']['description'],
+                'metadata': d.get('metadata', {}),
+                'term_count': d['term_count'],
+                'created_at': d['created_at'],
+                'updated_at': d['updated_at']
+            }
+        })
         
     except Exception as e:
-        logger.error(f"Error retrieving domain: {str(e)}")
-        return handle_error(e)
+        logger.error(f"Get domain error: {e}", exc_info=True)
+        return create_error_response(500, f'Failed to get domain: {str(e)}')
 
 
-def handle_update_domain(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """Handle domain updates"""
+def handle_update_domain(event, user_id):
+    """Update domain"""
     try:
-        path_params = get_path_parameters(event)
-        domain_id = path_params.get('domain_id')
+        path = event.get('path', '')
+        domain_id = path.split('/domains/')[-1].split('/')[0]
         
-        if not domain_id:
-            return create_error_response(400, 'Domain ID is required')
+        body = json.loads(event.get('body', '{}'))
         
-        body = parse_request_body(event)
-        
-        # Check if domain exists and user owns it
-        existing_domain = execute_query_one(
-            """
-            SELECT data FROM tree_nodes 
-            WHERE id = %s AND user_id = %s AND node_type = 'domain'
-            """,
-            (domain_id, user_id)
+        # Verify ownership
+        existing = db_proxy.execute_query(
+            "SELECT id FROM tree_nodes WHERE id = %s AND user_id = %s AND node_type = 'domain'",
+            params=[domain_id, user_id],
+            return_dict=True
         )
         
-        if not existing_domain:
-            return create_not_found_response('Domain not found')
+        if not existing or len(existing) == 0:
+            return create_error_response(404, 'Domain not found')
         
-        current_data = existing_domain[0]
+        # Build update
+        updates = []
+        params = []
         
-        # Update fields if provided
-        if 'name' in body:
-            name = body['name'].strip()
-            if len(name) < 2 or len(name) > 100:
-                return create_validation_error_response({
-                    'name': 'Domain name must be between 2 and 100 characters'
-                })
+        if 'name' in body or 'description' in body:
+            # Get current data
+            current = db_proxy.execute_query(
+                "SELECT data FROM tree_nodes WHERE id = %s",
+                params=[domain_id],
+                return_dict=True
+            )[0]
             
-            # Check for duplicate names (excluding current domain)
-            duplicate = execute_query_one(
-                """
-                SELECT id FROM tree_nodes 
-                WHERE user_id = %s AND node_type = 'domain' 
-                AND data->>'name' = %s AND id != %s
-                """,
-                (user_id, name, domain_id)
-            )
+            data = current['data']
+            if 'name' in body:
+                data['name'] = body['name'].strip()
+            if 'description' in body:
+                data['description'] = body['description'].strip()
             
-            if duplicate:
-                return create_error_response(409, 'Domain with this name already exists')
-            
-            current_data['name'] = name
+            updates.append("data = %s")
+            params.append(json.dumps(data))
         
-        if 'description' in body:
-            description = body['description'].strip()
-            if len(description) < 10 or len(description) > 500:
-                return create_validation_error_response({
-                    'description': 'Domain description must be between 10 and 500 characters'
-                })
-            current_data['description'] = description
+        if 'metadata' in body:
+            updates.append("metadata = %s")
+            params.append(json.dumps(body['metadata']))
         
-        # Update domain
-        execute_query(
-            """
-            UPDATE tree_nodes 
-            SET data = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s AND user_id = %s
+        if not updates:
+            return create_error_response(400, 'No valid fields to update')
+        
+        params.append(domain_id)
+        
+        result = db_proxy.execute_query(
+            f"""
+            UPDATE tree_nodes
+            SET {', '.join(updates)}
+            WHERE id = %s
+            RETURNING id, data, metadata, updated_at
             """,
-            (json.dumps(current_data), domain_id, user_id)
+            params=params,
+            return_dict=True
         )
         
-        return create_success_response({'id': domain_id}, 'Domain updated successfully')
+        if not result or len(result) == 0:
+            return create_error_response(500, 'Failed to update domain')
+        
+        d = result[0]
+        
+        return create_success_response({
+            'message': 'Domain updated successfully',
+            'domain': {
+                'id': d['id'],
+                'name': d['data']['name'],
+                'description': d['data']['description'],
+                'metadata': d.get('metadata', {}),
+                'updated_at': d['updated_at']
+            }
+        })
+        
+    except json.JSONDecodeError:
+        return create_error_response(400, 'Invalid JSON in request body')
+    except Exception as e:
+        logger.error(f"Update domain error: {e}", exc_info=True)
+        return create_error_response(500, f'Failed to update domain: {str(e)}')
+
+
+def handle_delete_domain(event, user_id):
+    """Delete domain (cascades to terms)"""
+    try:
+        path = event.get('path', '')
+        domain_id = path.split('/domains/')[-1].split('/')[0]
+        
+        # Verify ownership
+        existing = db_proxy.execute_query(
+            "SELECT id FROM tree_nodes WHERE id = %s AND user_id = %s AND node_type = 'domain'",
+            params=[domain_id, user_id],
+            return_dict=True
+        )
+        
+        if not existing or len(existing) == 0:
+            return create_error_response(404, 'Domain not found')
+        
+        # Delete (cascades to terms due to foreign key)
+        db_proxy.execute_query(
+            "DELETE FROM tree_nodes WHERE id = %s",
+            params=[domain_id]
+        )
+        
+        return create_success_response({
+            'message': 'Domain deleted successfully'
+        })
         
     except Exception as e:
-        logger.error(f"Error updating domain: {str(e)}")
-        return handle_error(e)
+        logger.error(f"Delete domain error: {e}", exc_info=True)
+        return create_error_response(500, f'Failed to delete domain: {str(e)}')
 
 
-def handle_delete_domain(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """Handle domain deletion with cascade operations"""
+def handle_add_terms(event, user_id):
+    """Add terms to domain"""
     try:
-        path_params = get_path_parameters(event)
-        domain_id = path_params.get('domain_id')
+        path = event.get('path', '')
+        domain_id = path.split('/domains/')[-1].split('/terms')[0]
         
-        if not domain_id:
-            return create_error_response(400, 'Domain ID is required')
-        
-        # Check if domain exists and user owns it
-        existing_domain = execute_query_one(
-            """
-            SELECT id FROM tree_nodes 
-            WHERE id = %s AND user_id = %s AND node_type = 'domain'
-            """,
-            (domain_id, user_id)
-        )
-        
-        if not existing_domain:
-            return create_not_found_response('Domain not found')
-        
-        # Delete domain (cascade will handle terms due to foreign key constraint)
-        execute_query(
-            "DELETE FROM tree_nodes WHERE id = %s AND user_id = %s",
-            (domain_id, user_id)
-        )
-        
-        return create_success_response({'id': domain_id}, 'Domain deleted successfully')
-        
-    except Exception as e:
-        logger.error(f"Error deleting domain: {str(e)}")
-        return handle_error(e)
-
-
-def handle_add_terms(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """
-    Handle adding terms to a domain
-    Requirements: 2.2, 2.4
-    """
-    try:
-        path_params = get_path_parameters(event)
-        domain_id = path_params.get('domain_id')
-        
-        if not domain_id:
-            return create_error_response(400, 'Domain ID is required')
-        
-        # Verify domain exists and user owns it
-        domain = execute_query_one(
-            """
-            SELECT id, metadata FROM tree_nodes 
-            WHERE id = %s AND user_id = %s AND node_type = 'domain'
-            """,
-            (domain_id, user_id)
-        )
-        
-        if not domain:
-            return create_not_found_response('Domain not found')
-        
-        body = parse_request_body(event)
+        body = json.loads(event.get('body', '{}'))
         terms = body.get('terms', [])
         
         if not terms or not isinstance(terms, list):
-            return create_validation_error_response({
-                'terms': 'Terms array is required'
-            })
+            return create_error_response(400, 'Terms array is required')
         
-        validation_errors = {}
-        processed_terms = []
+        # Verify domain ownership
+        domain = db_proxy.execute_query(
+            "SELECT id FROM tree_nodes WHERE id = %s AND user_id = %s AND node_type = 'domain'",
+            params=[domain_id, user_id],
+            return_dict=True
+        )
         
-        for i, term_data in enumerate(terms):
-            if not isinstance(term_data, dict):
-                validation_errors[f'terms[{i}]'] = 'Each term must be an object'
-                continue
-                
-            term = term_data.get('term', '').strip()
-            definition = term_data.get('definition', '').strip()
-            
-            if not term:
-                validation_errors[f'terms[{i}].term'] = 'Term is required'
-            elif len(term) < 2 or len(term) > 200:
-                validation_errors[f'terms[{i}].term'] = 'Term must be between 2 and 200 characters'
-                
-            if not definition:
-                validation_errors[f'terms[{i}].definition'] = 'Definition is required'
-            elif len(definition) < 10 or len(definition) > 1000:
-                validation_errors[f'terms[{i}].definition'] = 'Definition must be between 10 and 1000 characters'
-            
-            if term and definition:
-                # Check for duplicate terms within this domain
-                existing_term = execute_query_one(
-                    """
-                    SELECT id FROM tree_nodes 
-                    WHERE parent_id = %s AND node_type = 'term' 
-                    AND data->>'term' = %s
-                    """,
-                    (domain_id, term)
-                )
-                
-                if existing_term:
-                    validation_errors[f'terms[{i}].term'] = f'Term "{term}" already exists in this domain'
-                else:
-                    processed_terms.append({
-                        'term': term,
-                        'definition': definition
-                    })
-        
-        if validation_errors:
-            return create_validation_error_response(validation_errors)
+        if not domain or len(domain) == 0:
+            return create_error_response(404, 'Domain not found')
         
         # Insert terms
         created_terms = []
-        for term_data in processed_terms:
-            term_id = str(uuid.uuid4())
+        for term_data in terms:
+            if not term_data.get('term') or not term_data.get('definition'):
+                continue
             
-            execute_query(
+            term_json = json.dumps({
+                'term': term_data['term'].strip(),
+                'definition': term_data['definition'].strip(),
+                'example': term_data.get('example', ''),
+                'tags': term_data.get('tags', [])
+            })
+            
+            result = db_proxy.execute_query(
                 """
-                INSERT INTO tree_nodes (id, parent_id, user_id, node_type, data)
-                VALUES (%s, %s, %s, 'term', %s)
+                INSERT INTO tree_nodes (user_id, parent_id, node_type, data)
+                VALUES (%s, %s, 'term', %s)
+                RETURNING id, data, created_at
                 """,
-                (term_id, domain_id, user_id, json.dumps(term_data))
+                params=[user_id, domain_id, term_json],
+                return_dict=True
             )
             
-            created_terms.append({
-                'id': term_id,
-                'term': term_data['term'],
-                'definition': term_data['definition']
-            })
+            if result and len(result) > 0:
+                t = result[0]
+                created_terms.append({
+                    'id': t['id'],
+                    'term': t['data']['term'],
+                    'definition': t['data']['definition'],
+                    'created_at': t['created_at']
+                })
         
-        # Update domain term count
-        current_metadata = domain[1] if domain[1] else {}
-        if isinstance(current_metadata, str):
-            current_metadata = json.loads(current_metadata)
+        return create_created_response({
+            'message': f'{len(created_terms)} terms added successfully',
+            'terms': created_terms
+        })
         
-        current_metadata['term_count'] = current_metadata.get('term_count', 0) + len(created_terms)
-        
-        logger.info(f"Updating domain {domain_id} metadata: {current_metadata}")
-        
-        execute_query(
-            """
-            UPDATE tree_nodes 
-            SET metadata = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            """,
-            (json.dumps(current_metadata), domain_id)
-        )
-        
-        return create_created_response(
-            {'terms': created_terms, 'count': len(created_terms)},
-            f'{len(created_terms)} terms added successfully'
-        )
-        
+    except json.JSONDecodeError:
+        return create_error_response(400, 'Invalid JSON in request body')
     except Exception as e:
-        logger.error(f"Error adding terms: {str(e)}")
-        return handle_error(e)
+        logger.error(f"Add terms error: {e}", exc_info=True)
+        return create_error_response(500, f'Failed to add terms: {str(e)}')
 
 
-def handle_get_terms(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """Handle retrieving terms for a domain"""
+def handle_get_terms(event, user_id):
+    """Get terms for domain"""
     try:
-        path_params = get_path_parameters(event)
-        domain_id = path_params.get('domain_id')
+        path = event.get('path', '')
+        domain_id = path.split('/domains/')[-1].split('/terms')[0]
         
-        if not domain_id:
-            return create_error_response(400, 'Domain ID is required')
-        
-        # Verify domain exists and user owns it
-        domain = execute_query_one(
-            """
-            SELECT id FROM tree_nodes 
-            WHERE id = %s AND user_id = %s AND node_type = 'domain'
-            """,
-            (domain_id, user_id)
+        # Verify domain ownership
+        domain = db_proxy.execute_query(
+            "SELECT id FROM tree_nodes WHERE id = %s AND user_id = %s AND node_type = 'domain'",
+            params=[domain_id, user_id],
+            return_dict=True
         )
         
-        if not domain:
-            return create_not_found_response('Domain not found')
+        if not domain or len(domain) == 0:
+            return create_error_response(404, 'Domain not found')
         
-        # Get terms for the domain
-        terms = execute_query(
+        # Get terms
+        terms = db_proxy.execute_query(
             """
-            SELECT 
-                id,
-                data->>'term' as term,
-                data->>'definition' as definition,
-                created_at,
-                updated_at
+            SELECT id, data, created_at, updated_at
             FROM tree_nodes
             WHERE parent_id = %s AND node_type = 'term'
-            ORDER BY created_at ASC
+            ORDER BY created_at
             """,
-            (domain_id,)
+            params=[domain_id],
+            return_dict=True
         )
         
         term_list = []
         for term in terms:
             term_list.append({
-                'id': term[0],
-                'term': term[1],
-                'definition': term[2],
-                'created_at': term[3].isoformat() if term[3] else None,
-                'updated_at': term[4].isoformat() if term[4] else None
+                'id': term['id'],
+                'term': term['data']['term'],
+                'definition': term['data']['definition'],
+                'example': term['data'].get('example', ''),
+                'tags': term['data'].get('tags', []),
+                'created_at': term['created_at'],
+                'updated_at': term['updated_at']
             })
         
-        return create_success_response(term_list)
+        return create_success_response({
+            'terms': term_list,
+            'count': len(term_list)
+        })
         
     except Exception as e:
-        logger.error(f"Error retrieving terms: {str(e)}")
-        return handle_error(e)
-
-
-def handle_update_term(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """Handle term updates"""
-    try:
-        path_params = get_path_parameters(event)
-        domain_id = path_params.get('domain_id')
-        term_id = path_params.get('term_id')
-        
-        if not domain_id or not term_id:
-            return create_error_response(400, 'Domain ID and Term ID are required')
-        
-        # Verify domain ownership and term exists
-        term = execute_query_one(
-            """
-            SELECT tn.data, d.user_id
-            FROM tree_nodes tn
-            JOIN tree_nodes d ON tn.parent_id = d.id
-            WHERE tn.id = %s AND tn.parent_id = %s 
-            AND tn.node_type = 'term' AND d.node_type = 'domain'
-            """,
-            (term_id, domain_id)
-        )
-        
-        if not term or term[1] != user_id:
-            return create_not_found_response('Term not found')
-        
-        body = parse_request_body(event)
-        current_data = term[0]
-        
-        # Update fields if provided
-        validation_errors = {}
-        
-        if 'term' in body:
-            new_term = body['term'].strip()
-            if len(new_term) < 2 or len(new_term) > 200:
-                validation_errors['term'] = 'Term must be between 2 and 200 characters'
-            else:
-                # Check for duplicate terms within domain (excluding current term)
-                duplicate = execute_query_one(
-                    """
-                    SELECT id FROM tree_nodes 
-                    WHERE parent_id = %s AND node_type = 'term' 
-                    AND data->>'term' = %s AND id != %s
-                    """,
-                    (domain_id, new_term, term_id)
-                )
-                
-                if duplicate:
-                    validation_errors['term'] = 'Term already exists in this domain'
-                else:
-                    current_data['term'] = new_term
-        
-        if 'definition' in body:
-            new_definition = body['definition'].strip()
-            if len(new_definition) < 10 or len(new_definition) > 1000:
-                validation_errors['definition'] = 'Definition must be between 10 and 1000 characters'
-            else:
-                current_data['definition'] = new_definition
-        
-        if validation_errors:
-            return create_validation_error_response(validation_errors)
-        
-        # Update term
-        execute_query(
-            """
-            UPDATE tree_nodes 
-            SET data = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            """,
-            (json.dumps(current_data), term_id)
-        )
-        
-        return create_success_response({'id': term_id}, 'Term updated successfully')
-        
-    except Exception as e:
-        logger.error(f"Error updating term: {str(e)}")
-        return handle_error(e)
-
-
-def handle_delete_term(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """Handle term deletion"""
-    try:
-        path_params = get_path_parameters(event)
-        domain_id = path_params.get('domain_id')
-        term_id = path_params.get('term_id')
-        
-        if not domain_id or not term_id:
-            return create_error_response(400, 'Domain ID and Term ID are required')
-        
-        # Verify domain ownership and term exists
-        term = execute_query_one(
-            """
-            SELECT tn.id, d.user_id, d.metadata
-            FROM tree_nodes tn
-            JOIN tree_nodes d ON tn.parent_id = d.id
-            WHERE tn.id = %s AND tn.parent_id = %s 
-            AND tn.node_type = 'term' AND d.node_type = 'domain'
-            """,
-            (term_id, domain_id)
-        )
-        
-        if not term or term[1] != user_id:
-            return create_not_found_response('Term not found')
-        
-        # Delete term
-        execute_query("DELETE FROM tree_nodes WHERE id = %s", (term_id,))
-        
-        # Update domain term count
-        current_metadata = term[2] or {}
-        current_metadata['term_count'] = max(0, current_metadata.get('term_count', 1) - 1)
-        
-        execute_query(
-            """
-            UPDATE tree_nodes 
-            SET metadata = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            """,
-            (json.dumps(current_metadata), domain_id)
-        )
-        
-        return create_success_response({'id': term_id}, 'Term deleted successfully')
-        
-    except Exception as e:
-        logger.error(f"Error deleting term: {str(e)}")
-        return handle_error(e)
+        logger.error(f"Get terms error: {e}", exc_info=True)
+        return create_error_response(500, f'Failed to get terms: {str(e)}')

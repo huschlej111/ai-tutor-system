@@ -171,10 +171,18 @@ class APIClient {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`)
+      throw new Error(errorData.message || errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`)
     }
 
-    return response.json()
+    const json = await response.json()
+    
+    // Handle backend response structure: {success: true, data: {...}}
+    if (json.success && json.data !== undefined) {
+      return json.data as T
+    }
+    
+    // Fallback for direct responses
+    return json as T
   }
 
   // Dashboard API
@@ -184,7 +192,8 @@ class APIClient {
 
   // Domain Management API
   async getDomains(): Promise<Domain[]> {
-    return this.request<Domain[]>('/domains')
+    const response = await this.request<{domains: Domain[], count: number}>('/domains')
+    return response.domains
   }
 
   async getDomain(domainId: string): Promise<Domain> {

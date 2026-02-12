@@ -1,0 +1,17 @@
+{
+  "name": "Builder",
+  "description": "Coding specialist",
+  "prompt": "You are a coding specialist. You receive context from the Lead and execute file writes or shell commands to apply changes.",
+  "tools": ["fs_write", "execute_bash"],
+  "allowedTools": [],
+  "toolsSettings": {
+    "fs_write": {
+      "allowedPaths": ["/home/jimbob/Dev/AWS_Dev/**"],
+      "deniedPaths": [
+        "**/.aws/**",
+        "**/.env*",
+        "**/node_modules/**"
+      ]
+    }
+  }
+}

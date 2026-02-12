@@ -19,10 +19,14 @@ from response_utils import create_response, handle_error
 from security_controls import extract_client_info
 from security_monitoring import SecurityMonitor
 from security_middleware import security_middleware, create_secure_response, validate_email
+from db_proxy_client import DBProxyClient
 
 
 # Initialize Cognito client
 cognito_client = boto3.client('cognito-idp', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
+
+# Initialize DB Proxy client
+db_proxy = DBProxyClient(os.environ.get('DB_PROXY_FUNCTION_NAME'))
 
 # Get Cognito configuration from environment
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
@@ -204,10 +208,39 @@ def handle_register(event: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
         
+        # Auto-confirm user for dev environment (no email verification)
+        if STAGE in ['prod', 'dev'] and not response.get('UserConfirmed', False):
+            try:
+                cognito_client.admin_confirm_sign_up(
+                    UserPoolId=USER_POOL_ID,
+                    Username=email
+                )
+                user_confirmed = True
+            except Exception as confirm_error:
+                print(f"Warning: Failed to auto-confirm user: {confirm_error}")
+                user_confirmed = False
+        else:
+            user_confirmed = response.get('UserConfirmed', False)
+        
+        # Create user record in database
+        try:
+            db_proxy.execute_query(
+                """
+                INSERT INTO users (cognito_sub, email, first_name, last_name, is_active)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (cognito_sub) DO NOTHING
+                """,
+                params=[response['UserSub'], email, first_name or None, last_name or None, True]
+            )
+            print(f"Created user record in database for {email}")
+        except Exception as db_error:
+            print(f"Warning: Failed to create user in database: {db_error}")
+            # Don't fail registration if DB insert fails
+        
         return create_secure_response(201, {
             'message': 'User registered successfully',
             'user_sub': response['UserSub'],
-            'confirmation_required': not response.get('UserConfirmed', False),
+            'confirmation_required': not user_confirmed,
             'delivery_details': response.get('CodeDeliveryDetails', {})
         })
         

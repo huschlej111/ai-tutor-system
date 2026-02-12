@@ -46,8 +46,9 @@ export class AuthService {
     try {
       const session = await fetchAuthSession()
       
-      if (session.tokens?.accessToken) {
-        headers.Authorization = `Bearer ${session.tokens.accessToken.toString()}`
+      // Use idToken for API Gateway Cognito authorizer (not accessToken)
+      if (session.tokens?.idToken) {
+        headers.Authorization = `Bearer ${session.tokens.idToken.toString()}`
       }
     } catch (error) {
       console.warn('Failed to get auth session for headers:', error)
