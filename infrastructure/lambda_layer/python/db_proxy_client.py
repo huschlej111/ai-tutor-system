@@ -153,6 +153,171 @@ class DBProxyClient:
         
         result = self._invoke(payload)
         return result.get('row_count', 0)
+    
+    # Quiz-specific operations
+    
+    def create_quiz_session(self, session_data: Dict[str, Any]) -> str:
+        """
+        Create a new quiz session record.
+        
+        Args:
+            session_data: Dictionary with user_id, domain_id, total_terms
+            
+        Returns:
+            Session ID (UUID string)
+        """
+        query = """
+            INSERT INTO quiz_sessions (user_id, domain_id, status, current_term_index, total_terms)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """
+        params = (
+            session_data['user_id'],
+            session_data['domain_id'],
+            session_data.get('status', 'active'),
+            session_data.get('current_term_index', 0),
+            session_data['total_terms']
+        )
+        
+        result = self.execute_query_one(query, params, return_dict=True)
+        return str(result['id'])
+    
+    def get_quiz_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve quiz session details.
+        
+        Args:
+            session_id: UUID of the quiz session
+            
+        Returns:
+            Session dictionary or None if not found
+        """
+        query = """
+            SELECT id, user_id, domain_id, status, current_term_index, total_terms,
+                   started_at, paused_at, completed_at, updated_at
+            FROM quiz_sessions
+            WHERE id = %s
+        """
+        return self.execute_query_one(query, (session_id,), return_dict=True)
+    
+    def update_quiz_session(self, session_id: str, updates: Dict[str, Any]) -> None:
+        """
+        Update quiz session state.
+        
+        Args:
+            session_id: UUID of the quiz session
+            updates: Dictionary of fields to update (status, current_term_index, etc.)
+        """
+        # Build dynamic UPDATE query based on provided fields
+        allowed_fields = ['status', 'current_term_index', 'paused_at', 'completed_at']
+        set_clauses = []
+        params = []
+        
+        for field in allowed_fields:
+            if field in updates:
+                set_clauses.append(f"{field} = %s")
+                params.append(updates[field])
+        
+        if not set_clauses:
+            return  # Nothing to update
+        
+        # Always update updated_at
+        set_clauses.append("updated_at = NOW()")
+        
+        # Add session_id to params for WHERE clause
+        params.append(session_id)
+        
+        query = f"""
+            UPDATE quiz_sessions
+            SET {', '.join(set_clauses)}
+            WHERE id = %s
+        """
+        
+        self.execute_query(query, tuple(params))
+    
+    def delete_quiz_session(self, session_id: str) -> None:
+        """
+        Delete a quiz session.
+        
+        Args:
+            session_id: UUID of the quiz session
+        """
+        query = "DELETE FROM quiz_sessions WHERE id = %s"
+        self.execute_query(query, (session_id,))
+    
+    def get_domain_terms(self, domain_id: str) -> List[Dict[str, Any]]:
+        """
+        Fetch all terms for a domain.
+        
+        Args:
+            domain_id: UUID of the domain
+            
+        Returns:
+            List of term dictionaries with id, term, and definition
+        """
+        query = """
+            SELECT id, data->>'term' as term, data->>'definition' as definition
+            FROM tree_nodes
+            WHERE parent_id = %s AND node_type = 'term'
+            ORDER BY created_at
+        """
+        return self.execute_query(query, (domain_id,), return_dict=True)
+    
+    def record_progress(self, progress_data: Dict[str, Any]) -> str:
+        """
+        Record a student's answer attempt.
+        
+        Args:
+            progress_data: Dictionary with user_id, term_id, session_id, student_answer,
+                          correct_answer, is_correct, similarity_score, attempt_number
+            
+        Returns:
+            Progress record ID (UUID string)
+        """
+        query = """
+            INSERT INTO progress_records 
+            (user_id, term_id, session_id, student_answer, correct_answer, 
+             is_correct, similarity_score, attempt_number, feedback)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """
+        params = (
+            progress_data['user_id'],
+            progress_data['term_id'],
+            progress_data.get('session_id'),
+            progress_data['student_answer'],
+            progress_data['correct_answer'],
+            progress_data['is_correct'],
+            progress_data.get('similarity_score'),
+            progress_data.get('attempt_number', 1),
+            progress_data.get('feedback')
+        )
+        
+        result = self.execute_query_one(query, params, return_dict=True)
+        return str(result['id'])
+    
+    def get_user_progress(self, user_id: str, domain_id: str) -> List[Dict[str, Any]]:
+        """
+        Get progress records for a user in a domain.
+        
+        Args:
+            user_id: UUID of the user
+            domain_id: UUID of the domain
+            
+        Returns:
+            List of progress record dictionaries
+        """
+        query = """
+            SELECT pr.id, pr.user_id, pr.term_id, pr.session_id,
+                   pr.student_answer, pr.correct_answer, pr.is_correct,
+                   pr.similarity_score, pr.attempt_number, pr.feedback, pr.created_at,
+                   tn.data->>'term' as term
+            FROM progress_records pr
+            JOIN tree_nodes tn ON pr.term_id = tn.id
+            WHERE pr.user_id = %s AND tn.parent_id = %s
+            ORDER BY pr.created_at DESC
+        """
+        return self.execute_query(query, (user_id, domain_id), return_dict=True)
 
 
 # Global instance for easy import
