@@ -8,11 +8,46 @@ import uuid
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from shared.database import get_db_cursor, execute_query, execute_query_one
-from shared.response_utils import create_response, handle_error
-from shared.auth_utils import extract_user_from_cognito_event
+
+# Add /opt/python to path for Lambda layer modules
+import sys
+sys.path.append('/opt/python')
+
+import boto3
+from response_utils import create_response, handle_error
+from auth_utils import extract_user_from_cognito_event
+from db_proxy_client import DBProxyClient
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Initialize DB Proxy client
+db_proxy = DBProxyClient(os.environ.get('DB_PROXY_FUNCTION_NAME'))
+
+# Initialize Lambda client for Answer Evaluator invocation
+lambda_client = boto3.client('lambda')
+ANSWER_EVALUATOR_FUNCTION_NAME = os.environ.get('ANSWER_EVALUATOR_FUNCTION_NAME')
+
+
+def invoke_answer_evaluator(student_answer: str, correct_answer: str, threshold: float = 0.7) -> Dict:
+    """Invoke Answer Evaluator Lambda"""
+    payload = {
+        'answer': student_answer,
+        'correct_answer': correct_answer
+    }
+    
+    response = lambda_client.invoke(
+        FunctionName=ANSWER_EVALUATOR_FUNCTION_NAME,
+        InvocationType='RequestResponse',
+        Payload=json.dumps(payload)
+    )
+    
+    result = json.loads(response['Payload'].read())
+    if result.get('statusCode') != 200:
+        raise Exception(f"Answer Evaluator error: {result.get('body')}")
+    
+    body = json.loads(result['body'])
+    return json.loads(body) if isinstance(body, str) else body
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -28,22 +63,37 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if not auth_result['valid']:
             return create_response(401, {'error': 'Unauthorized'})
         
+        # Get database user ID from cognito_sub
+        cognito_sub = auth_result['user_id']  # This is actually the Cognito sub
+        user_query = "SELECT id FROM users WHERE cognito_sub = %s"
+        user_result = db_proxy.execute_query_one(user_query, (cognito_sub,), return_dict=True)
+        
+        if not user_result:
+            return create_response(404, {'error': 'User not found in database'})
+        
+        user_id = user_result['id']  # This is the database user ID
+        
         if http_method == 'POST':
             if '/quiz/start' in path:
-                return handle_start_quiz(event, auth_result['user_id'])
+                return handle_start_quiz(event, user_id)
             elif '/quiz/answer' in path:
-                return handle_submit_answer(event, auth_result['user_id'])
+                return handle_submit_answer(event, user_id)
             elif '/quiz/pause' in path:
-                return handle_pause_quiz(event, auth_result['user_id'])
+                return handle_pause_quiz(event, user_id)
             elif '/quiz/resume' in path:
-                return handle_resume_quiz(event, auth_result['user_id'])
+                return handle_resume_quiz(event, user_id)
             elif '/quiz/restart' in path:
-                return handle_restart_quiz(event, auth_result['user_id'])
+                return handle_restart_quiz(event, user_id)
         elif http_method == 'GET':
             if '/quiz/question' in path:
-                return handle_get_next_question(event, auth_result['user_id'])
+                return handle_get_next_question(event, user_id)
             elif '/quiz/complete' in path:
-                return handle_complete_quiz(event, auth_result['user_id'])
+                return handle_complete_quiz(event, user_id)
+            elif '/quiz/session/' in path:
+                return handle_get_session(event, user_id)
+        elif http_method == 'DELETE':
+            if '/quiz/session/' in path:
+                return handle_delete_session(event, user_id)
         
         return create_response(404, {'error': 'Endpoint not found'})
         
@@ -67,12 +117,12 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             FROM tree_nodes 
             WHERE id = %s AND node_type = 'domain'
         """
-        domain_result = execute_query_one(domain_query, (domain_id,))
+        domain_result = db_proxy.execute_query_one(domain_query, (domain_id,), return_dict=True)
         
         if not domain_result:
             return create_response(404, {'error': 'Domain not found'})
         
-        domain_user_id = domain_result[2]
+        domain_user_id = domain_result['user_id']
         
         # Check if user has access to this domain (owner or public domain)
         if domain_user_id != user_id:
@@ -87,7 +137,7 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             WHERE parent_id = %s AND node_type = 'term'
             ORDER BY created_at
         """
-        terms_result = execute_query(terms_query, (domain_id,))
+        terms_result = db_proxy.execute_query(terms_query, (domain_id,), return_dict=True)
         
         if not terms_result:
             return create_response(400, {'error': 'Domain has no terms to quiz on'})
@@ -98,21 +148,21 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             FROM quiz_sessions 
             WHERE user_id = %s AND domain_id = %s AND status = 'active'
         """
-        existing_session = execute_query_one(existing_session_query, (user_id, domain_id))
+        existing_session = db_proxy.execute_query_one(existing_session_query, (user_id, domain_id), return_dict=True)
         
         if existing_session:
             # Return existing session
-            session_id = existing_session[0]
-            current_index = existing_session[1]
-            total_questions = existing_session[2]
-            session_data = existing_session[3] or {}
+            session_id = existing_session['id']
+            current_index = existing_session['current_term_index']
+            total_questions = existing_session['total_questions']
+            session_data = existing_session['session_data'] or {}
             
             # Get current question
             if current_index < len(terms_result):
                 current_term = terms_result[current_index]
                 current_question = {
-                    'term_id': str(current_term[0]),
-                    'term': current_term[1],
+                    'term_id': str(current_term['id']),
+                    'term': current_term['term'],
                     'question_number': current_index + 1,
                     'total_questions': total_questions
                 }
@@ -122,7 +172,7 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             return create_response(200, {
                 'session_id': str(session_id),
                 'status': 'resumed',
-                'domain_name': domain_result[1],
+                'domain_name': domain_result['name'],
                 'current_question': current_question,
                 'progress': {
                     'current_index': current_index,
@@ -137,8 +187,8 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         
         # Prepare session data with term order
         session_data = {
-            'term_order': [str(term[0]) for term in terms_result],
-            'domain_name': domain_result[1]
+            'term_order': [str(term['id']) for term in terms_result],
+            'domain_name': domain_result['name']
         }
         
         # Insert new session
@@ -146,15 +196,15 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             INSERT INTO quiz_sessions (id, user_id, domain_id, status, current_term_index, total_questions, session_data)
             VALUES (%s, %s, %s, 'active', 0, %s, %s)
         """
-        execute_query(insert_session_query, (
+        db_proxy.execute_query(insert_session_query, (
             session_id, user_id, domain_id, total_questions, json.dumps(session_data)
         ))
         
         # Get first question
         first_term = terms_result[0]
         current_question = {
-            'term_id': str(first_term[0]),
-            'term': first_term[1],
+            'term_id': str(first_term['id']),
+            'term': first_term['term'],
             'question_number': 1,
             'total_questions': total_questions
         }
@@ -162,7 +212,7 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         return create_response(200, {
             'session_id': session_id,
             'status': 'started',
-            'domain_name': domain_result[1],
+            'domain_name': domain_result['name'],
             'current_question': current_question,
             'progress': {
                 'current_index': 0,
@@ -200,17 +250,17 @@ def handle_submit_answer(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             JOIN tree_nodes tn ON qs.domain_id = tn.id
             WHERE qs.id = %s AND qs.user_id = %s
         """
-        session_result = execute_query_one(session_query, (session_id, user_id))
+        session_result = db_proxy.execute_query_one(session_query, (session_id, user_id), return_dict=True)
         
         if not session_result:
             return create_response(404, {'error': 'Quiz session not found'})
         
-        current_status = session_result[1]
-        current_index = session_result[2]
-        total_questions = session_result[3]
-        session_data = session_result[4] or {}
-        correct_answers = session_result[5]
-        domain_name = session_result[6]
+        current_status = session_result['status']
+        current_index = session_result['current_term_index']
+        total_questions = session_result['total_questions']
+        session_data = session_result['session_data'] or {}
+        correct_answers = session_result['correct_answers']
+        domain_name = session_result['domain_name']
         
         if current_status != 'active':
             return create_response(400, {'error': f'Cannot submit answer for quiz in {current_status} state'})
@@ -232,13 +282,13 @@ def handle_submit_answer(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             FROM tree_nodes 
             WHERE id = %s
         """
-        term_result = execute_query_one(term_query, (term_id,))
+        term_result = db_proxy.execute_query_one(term_query, (term_id,), return_dict=True)
         
         if not term_result:
             return create_response(404, {'error': 'Current question not found'})
         
-        term_text = term_result[0]
-        correct_answer = term_result[1]
+        term_text = term_result['term']
+        correct_answer = term_result['definition']
         
         # Evaluate the answer using semantic similarity
         # For now, we'll use a simple evaluation - full integration with answer evaluation service
@@ -263,7 +313,7 @@ def handle_submit_answer(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
                                         is_correct, similarity_score, feedback)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        execute_query(progress_query, (
+        db_proxy.execute_query(progress_query, (
             user_id, term_id, session_id, student_answer, correct_answer,
             is_correct, similarity_score, feedback
         ))
@@ -282,7 +332,7 @@ def handle_submit_answer(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
                 SET current_term_index = %s, correct_answers = %s, status = 'completed', completed_at = CURRENT_TIMESTAMP
                 WHERE id = %s
             """
-            execute_query(update_session_query, (new_index, new_correct_answers, session_id))
+            db_proxy.execute_query(update_session_query, (new_index, new_correct_answers, session_id))
         else:
             # Update session progress
             update_session_query = """
@@ -290,7 +340,7 @@ def handle_submit_answer(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
                 SET current_term_index = %s, correct_answers = %s
                 WHERE id = %s
             """
-            execute_query(update_session_query, (new_index, new_correct_answers, session_id))
+            db_proxy.execute_query(update_session_query, (new_index, new_correct_answers, session_id))
         
         # Prepare next question if not completed
         next_question = None
@@ -301,12 +351,12 @@ def handle_submit_answer(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
                 FROM tree_nodes 
                 WHERE id = %s
             """
-            next_term_result = execute_query_one(next_term_query, (next_term_id,))
+            next_term_result = db_proxy.execute_query_one(next_term_query, (next_term_id,), return_dict=True)
             
             if next_term_result:
                 next_question = {
                     'term_id': next_term_id,
-                    'term': next_term_result[0],
+                    'term': next_term_result['term'],
                     'question_number': new_index + 1,
                     'total_questions': total_questions
                 }
@@ -352,12 +402,12 @@ def handle_restart_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             FROM tree_nodes 
             WHERE id = %s AND node_type = 'domain'
         """
-        domain_result = execute_query_one(domain_query, (domain_id,))
+        domain_result = db_proxy.execute_query_one(domain_query, (domain_id,), return_dict=True)
         
         if not domain_result:
             return create_response(404, {'error': 'Domain not found'})
         
-        domain_user_id = domain_result[2]
+        domain_user_id = domain_result['user_id']
         
         # Check if user has access to this domain
         if domain_user_id != user_id:
@@ -369,7 +419,7 @@ def handle_restart_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             SET status = 'abandoned'
             WHERE user_id = %s AND domain_id = %s AND status IN ('active', 'paused')
         """
-        execute_query(abandon_query, (user_id, domain_id))
+        db_proxy.execute_query(abandon_query, (user_id, domain_id))
         
         # Start a new quiz session (reuse the start quiz logic)
         return handle_start_quiz(event, user_id)
@@ -419,16 +469,16 @@ def handle_get_next_question(event: Dict[str, Any], user_id: str) -> Dict[str, A
             JOIN tree_nodes tn ON qs.domain_id = tn.id
             WHERE qs.id = %s AND qs.user_id = %s
         """
-        session_result = execute_query_one(session_query, (session_id, user_id))
+        session_result = db_proxy.execute_query_one(session_query, (session_id, user_id), return_dict=True)
         
         if not session_result:
             return create_response(404, {'error': 'Quiz session not found'})
         
-        current_status = session_result[1]
-        current_index = session_result[2]
-        total_questions = session_result[3]
-        session_data = session_result[4] or {}
-        domain_name = session_result[5]
+        current_status = session_result['status']
+        current_index = session_result['current_term_index']
+        total_questions = session_result['total_questions']
+        session_data = session_result['session_data'] or {}
+        domain_name = session_result['domain_name']
         
         if current_status != 'active':
             return create_response(400, {'error': f'Cannot get question for quiz in {current_status} state'})
@@ -452,12 +502,12 @@ def handle_get_next_question(event: Dict[str, Any], user_id: str) -> Dict[str, A
                 FROM tree_nodes 
                 WHERE id = %s
             """
-            term_result = execute_query_one(term_query, (term_id,))
+            term_result = db_proxy.execute_query_one(term_query, (term_id,), return_dict=True)
             
             if term_result:
                 current_question = {
                     'term_id': term_id,
-                    'term': term_result[0],
+                    'term': term_result['term'],
                     'question_number': current_index + 1,
                     'total_questions': total_questions
                 }
@@ -498,12 +548,12 @@ def handle_pause_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             FROM quiz_sessions 
             WHERE id = %s AND user_id = %s
         """
-        session_result = execute_query_one(session_query, (session_id, user_id))
+        session_result = db_proxy.execute_query_one(session_query, (session_id, user_id), return_dict=True)
         
         if not session_result:
             return create_response(404, {'error': 'Quiz session not found'})
         
-        current_status = session_result[1]
+        current_status = session_result['status']
         
         if current_status != 'active':
             return create_response(400, {'error': f'Cannot pause quiz in {current_status} state'})
@@ -514,7 +564,7 @@ def handle_pause_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             SET status = 'paused', paused_at = CURRENT_TIMESTAMP
             WHERE id = %s
         """
-        execute_query(update_query, (session_id,))
+        db_proxy.execute_query(update_query, (session_id,))
         
         return create_response(200, {
             'session_id': session_id,
@@ -547,16 +597,16 @@ def handle_resume_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             JOIN tree_nodes tn ON qs.domain_id = tn.id
             WHERE qs.id = %s AND qs.user_id = %s
         """
-        session_result = execute_query_one(session_query, (session_id, user_id))
+        session_result = db_proxy.execute_query_one(session_query, (session_id, user_id), return_dict=True)
         
         if not session_result:
             return create_response(404, {'error': 'Quiz session not found'})
         
-        current_status = session_result[1]
-        current_index = session_result[2]
-        total_questions = session_result[3]
-        session_data = session_result[4] or {}
-        domain_name = session_result[5]
+        current_status = session_result['status']
+        current_index = session_result['current_term_index']
+        total_questions = session_result['total_questions']
+        session_data = session_result['session_data'] or {}
+        domain_name = session_result['domain_name']
         
         if current_status != 'paused':
             return create_response(400, {'error': f'Cannot resume quiz in {current_status} state'})
@@ -571,7 +621,7 @@ def handle_resume_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             SET status = 'active', paused_at = NULL
             WHERE id = %s
         """
-        execute_query(update_query, (session_id,))
+        db_proxy.execute_query(update_query, (session_id,))
         
         # Get current question
         term_order = session_data.get('term_order', [])
@@ -584,12 +634,12 @@ def handle_resume_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
                 FROM tree_nodes 
                 WHERE id = %s
             """
-            term_result = execute_query_one(term_query, (term_id,))
+            term_result = db_proxy.execute_query_one(term_query, (term_id,), return_dict=True)
             
             if term_result:
                 current_question = {
                     'term_id': term_id,
-                    'term': term_result[0],
+                    'term': term_result['term'],
                     'question_number': current_index + 1,
                     'total_questions': total_questions
                 }
@@ -636,19 +686,19 @@ def handle_complete_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             JOIN tree_nodes tn ON qs.domain_id = tn.id
             WHERE qs.id = %s AND qs.user_id = %s
         """
-        session_result = execute_query_one(session_query, (session_id, user_id))
+        session_result = db_proxy.execute_query_one(session_query, (session_id, user_id), return_dict=True)
         
         if not session_result:
             return create_response(404, {'error': 'Quiz session not found'})
         
-        current_status = session_result[1]
-        current_index = session_result[2]
-        total_questions = session_result[3]
-        correct_answers = session_result[4]
-        started_at = session_result[5]
-        completed_at = session_result[6]
-        session_data = session_result[7] or {}
-        domain_name = session_result[8]
+        current_status = session_result['status']
+        current_index = session_result['current_term_index']
+        total_questions = session_result['total_questions']
+        correct_answers = session_result['correct_answers']
+        started_at = session_result['started_at']
+        completed_at = session_result['completed_at']
+        session_data = session_result['session_data'] or {}
+        domain_name = session_result['domain_name']
         
         # Check if quiz is completed
         if current_status != 'completed':
@@ -659,7 +709,7 @@ def handle_complete_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
                     SET status = 'completed', completed_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                 """
-                execute_query(update_query, (session_id,))
+                db_proxy.execute_query(update_query, (session_id,))
                 completed_at = datetime.now()
             else:
                 return create_response(400, {'error': 'Quiz is not yet completed'})
@@ -674,16 +724,16 @@ def handle_complete_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             WHERE pr.session_id = %s
             ORDER BY pr.created_at
         """
-        progress_results = execute_query(progress_query, (session_id,))
+        progress_results = db_proxy.execute_query(progress_query, (session_id,), return_dict=True)
         
         # Calculate performance metrics
         total_attempts = len(progress_results)
-        correct_count = sum(1 for record in progress_results if record[3])  # is_correct
+        correct_count = sum(1 for record in progress_results if record['is_correct'])
         incorrect_count = total_attempts - correct_count
         
         if total_attempts > 0:
             accuracy_percentage = (correct_count / total_attempts) * 100
-            average_similarity = sum(record[4] or 0 for record in progress_results) / total_attempts
+            average_similarity = sum(record['similarity_score'] or 0 for record in progress_results) / total_attempts
         else:
             accuracy_percentage = 0
             average_similarity = 0
@@ -701,12 +751,12 @@ def handle_complete_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         detailed_results = []
         for record in progress_results:
             detailed_results.append({
-                'term': record[7],
-                'student_answer': record[1],
-                'correct_answer': record[2],
-                'is_correct': record[3],
-                'similarity_score': round(record[4] or 0, 2),
-                'feedback': record[5]
+                'term': record['term'],
+                'student_answer': record['student_answer'],
+                'correct_answer': record['correct_answer'],
+                'is_correct': record['is_correct'],
+                'similarity_score': round(record['similarity_score'] or 0, 2),
+                'feedback': record['feedback']
             })
         
         # Generate performance summary
@@ -756,4 +806,121 @@ def handle_complete_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Error getting quiz completion summary: {str(e)}")
+        return handle_error(e)
+
+
+def handle_get_session(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle GET /quiz/session/{sessionId} - Get session details"""
+    try:
+        # Extract session_id from path parameters
+        path_parameters = event.get('pathParameters', {})
+        session_id = path_parameters.get('sessionId')
+        
+        if not session_id:
+            return create_response(400, {'error': 'session_id is required'})
+        
+        # Validate UUID format
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            return create_response(400, {'error': 'Invalid session_id format'})
+        
+        # Get session from database
+        session_query = """
+            SELECT 
+                qs.id, qs.user_id, qs.domain_id, qs.status,
+                qs.current_question_index, qs.total_questions,
+                qs.started_at, qs.completed_at, qs.paused_at,
+                d.name as domain_name
+            FROM quiz_sessions qs
+            JOIN domains d ON qs.domain_id = d.id
+            WHERE qs.id = %s
+        """
+        session = db_proxy.execute_query_one(session_query, (session_id,), return_dict=True)
+        
+        if not session:
+            return create_response(404, {'error': 'Quiz session not found'})
+        
+        # Verify session ownership
+        if session['user_id'] != user_id:
+            return create_response(403, {'error': 'Access denied to this quiz session'})
+        
+        # Get progress count
+        progress_query = """
+            SELECT COUNT(*) as answered_count
+            FROM progress_records
+            WHERE session_id = %s
+        """
+        progress_result = db_proxy.execute_query_one(progress_query, (session_id,), return_dict=True)
+        answered_count = progress_result['answered_count'] if progress_result else 0
+        
+        # Build response
+        session_details = {
+            'session_id': session['id'],
+            'domain_id': session['domain_id'],
+            'domain_name': session['domain_name'],
+            'status': session['status'],
+            'progress': {
+                'current_question': session['current_question_index'],
+                'total_questions': session['total_questions'],
+                'answered_count': answered_count,
+                'percentage_complete': round((answered_count / session['total_questions'] * 100), 1) if session['total_questions'] > 0 else 0
+            },
+            'timestamps': {
+                'started_at': session['started_at'].isoformat() if session['started_at'] else None,
+                'completed_at': session['completed_at'].isoformat() if session['completed_at'] else None,
+                'paused_at': session['paused_at'].isoformat() if session['paused_at'] else None
+            }
+        }
+        
+        return create_response(200, session_details)
+        
+    except Exception as e:
+        logger.error(f"Error getting session details: {str(e)}")
+        return handle_error(e)
+
+
+def handle_delete_session(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Handle DELETE /quiz/session/{sessionId} - Delete session"""
+    try:
+        # Extract session_id from path parameters
+        path_parameters = event.get('pathParameters', {})
+        session_id = path_parameters.get('sessionId')
+        
+        if not session_id:
+            return create_response(400, {'error': 'session_id is required'})
+        
+        # Validate UUID format
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            return create_response(400, {'error': 'Invalid session_id format'})
+        
+        # Verify session exists and user owns it
+        session_query = "SELECT user_id FROM quiz_sessions WHERE id = %s"
+        session = db_proxy.execute_query_one(session_query, (session_id,), return_dict=True)
+        
+        if not session:
+            return create_response(404, {'error': 'Quiz session not found'})
+        
+        if session['user_id'] != user_id:
+            return create_response(403, {'error': 'Access denied to this quiz session'})
+        
+        # Delete progress records first (foreign key constraint)
+        delete_progress_query = "DELETE FROM progress_records WHERE session_id = %s"
+        db_proxy.execute_query(delete_progress_query, (session_id,))
+        
+        # Delete session
+        delete_session_query = "DELETE FROM quiz_sessions WHERE id = %s"
+        db_proxy.execute_query(delete_session_query, (session_id,))
+        
+        logger.info(f"Deleted quiz session {session_id} for user {user_id}")
+        
+        return create_response(200, {
+            'message': 'Quiz session deleted successfully',
+            'session_id': session_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error deleting session: {str(e)}")
         return handle_error(e)
