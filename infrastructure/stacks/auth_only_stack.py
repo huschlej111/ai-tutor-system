@@ -12,6 +12,8 @@ from aws_cdk import (
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
     aws_iam as iam,
+    aws_ecr as ecr,
+    aws_ecr_assets as ecr_assets,
     Duration,
     RemovalPolicy
 )
@@ -329,11 +331,87 @@ class TutorSystemStack(Stack):
         # Grant Progress Lambda permission to invoke DB Proxy Lambda
         self.db_proxy_lambda.grant_invoke(self.progress_lambda)
         
+        # Step 5.9: Create ML Inference Lambda (Container-based with ML model)
+        # Pure ML inference - rarely changes
+        inference_repo = ecr.Repository.from_repository_name(
+            self,
+            "InferenceRepo",
+            repository_name="answer-evaluator-inference"
+        )
+        
+        self.inference_lambda = _lambda.DockerImageFunction(
+            self,
+            "InferenceFunction",
+            code=_lambda.DockerImageCode.from_ecr(
+                repository=inference_repo,
+                tag_or_digest="latest"
+            ),
+            timeout=Duration.seconds(120),
+            memory_size=2048,
+            environment={
+                "MODEL_PATH": "/opt/ml/model"
+            },
+            description="ML Inference Lambda - Semantic similarity calculation only"
+        )
+        
+        # Step 5.10: Create Answer Evaluator Lambda (Zip-based business logic)
+        # Fast deployment for threshold/feedback changes
+        self.answer_evaluator_lambda = _lambda.Function(
+            self,
+            "AnswerEvaluatorFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/answer_evaluator"),
+            timeout=Duration.seconds(120),  # Increased to handle inference Lambda cold starts
+            memory_size=256,
+            layers=[self.shared_layer],
+            environment={
+                "INFERENCE_FUNCTION_NAME": self.inference_lambda.function_name,
+                "THRESHOLD_EXCELLENT": "0.85",
+                "THRESHOLD_GOOD": "0.70",
+                "THRESHOLD_PARTIAL": "0.50",
+                "LOG_LEVEL": "INFO",
+                "REGION": self.region
+            },
+            description="Answer Evaluator - Business logic and API routing"
+        )
+        
+        # Grant Answer Evaluator permission to invoke Inference Lambda
+        self.inference_lambda.grant_invoke(self.answer_evaluator_lambda)
+        
+        # Step 5.11: Create Quiz Engine Lambda (Lambda A pattern)
+        self.quiz_engine_lambda = _lambda.Function(
+            self,
+            "QuizEngineFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/quiz_engine"),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            layers=[self.shared_layer],
+            # Outside VPC to access Cognito (public service)
+            environment={
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "ANSWER_EVALUATOR_FUNCTION_NAME": self.answer_evaluator_lambda.function_name,
+                "LOG_LEVEL": "INFO",
+                "REGION": self.region
+            },
+            description="Quiz Engine Lambda - manages quiz sessions and question flow"
+        )
+        
+        # Grant Quiz Engine permission to invoke DB Proxy Lambda
+        self.db_proxy_lambda.grant_invoke(self.quiz_engine_lambda)
+        
+        # Grant Quiz Engine permission to invoke Answer Evaluator Lambda
+        self.answer_evaluator_lambda.grant_invoke(self.quiz_engine_lambda)
+        
         # Lambda Bridge Architecture:
         # ✅ Lambda A (Auth) - Outside VPC, can reach Cognito
         # ✅ Lambda A (Profile) - Outside VPC, can reach Cognito
         # ✅ Lambda A (Domain) - Outside VPC, can reach Cognito
         # ✅ Lambda A (Progress) - Outside VPC, can reach Cognito
+        # ✅ Lambda A (Quiz Engine) - Outside VPC, can reach Cognito
+        # ✅ Lambda A (Answer Evaluator) - Outside VPC, ML model
         # ✅ Lambda B (DB Proxy) - Inside VPC, can reach RDS
         # ✅ Lambda A invokes Lambda B via AWS internal network (no NAT needed)
         # ✅ Completely free tier eligible
@@ -529,6 +607,144 @@ class TutorSystemStack(Stack):
             authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
+        # Step 8.5: Quiz Engine and Answer Evaluation Routes
+        quiz_integration = apigateway.LambdaIntegration(self.quiz_engine_lambda)
+        answer_evaluator_integration = apigateway.LambdaIntegration(self.answer_evaluator_lambda)
+        
+        # /quiz
+        quiz_resource = self.api.root.add_resource(
+            "quiz",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # POST /quiz/start - Start a new quiz session
+        start_resource = quiz_resource.add_resource(
+            "start",
+            default_cors_preflight_options=cors_options
+        )
+        start_resource.add_method(
+            "POST",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # GET /quiz/question - Get next question in current session
+        question_resource = quiz_resource.add_resource(
+            "question",
+            default_cors_preflight_options=cors_options
+        )
+        question_resource.add_method(
+            "GET",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # POST /quiz/answer - Submit answer for current question
+        answer_resource = quiz_resource.add_resource(
+            "answer",
+            default_cors_preflight_options=cors_options
+        )
+        answer_resource.add_method(
+            "POST",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # POST /quiz/pause - Pause current quiz session
+        pause_resource = quiz_resource.add_resource(
+            "pause",
+            default_cors_preflight_options=cors_options
+        )
+        pause_resource.add_method(
+            "POST",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # POST /quiz/resume - Resume paused quiz session
+        resume_resource = quiz_resource.add_resource(
+            "resume",
+            default_cors_preflight_options=cors_options
+        )
+        resume_resource.add_method(
+            "POST",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # /quiz/session
+        session_resource = quiz_resource.add_resource(
+            "session",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # /quiz/session/{sessionId}
+        session_id_resource = session_resource.add_resource(
+            "{sessionId}",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # GET /quiz/session/{sessionId} - Get session details
+        session_id_resource.add_method(
+            "GET",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # DELETE /quiz/session/{sessionId} - Delete session
+        session_id_resource.add_method(
+            "DELETE",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # /quiz/evaluate - Answer evaluation endpoints
+        evaluate_resource = quiz_resource.add_resource(
+            "evaluate",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # POST /quiz/evaluate - Evaluate single answer
+        evaluate_resource.add_method(
+            "POST",
+            answer_evaluator_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # /quiz/evaluate/batch
+        batch_resource = evaluate_resource.add_resource(
+            "batch",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # POST /quiz/evaluate/batch - Evaluate multiple answers
+        batch_resource.add_method(
+            "POST",
+            answer_evaluator_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # /quiz/evaluate/health
+        health_resource = evaluate_resource.add_resource(
+            "health",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # GET /quiz/evaluate/health - Health check (no auth required)
+        health_resource.add_method(
+            "GET",
+            answer_evaluator_integration
+        )
+        
         # Step 9: Frontend Hosting (S3 + CloudFront)
         # Create S3 bucket for static website hosting
         self.frontend_bucket = s3.Bucket(
@@ -651,4 +867,45 @@ class TutorSystemStack(Stack):
             value=self.frontend_bucket.bucket_name,
             description="S3 bucket name for frontend"
         )
-
+        
+        cdk.CfnOutput(
+            self,
+            "InferenceFunctionName",
+            value=self.inference_lambda.function_name,
+            description="ML Inference Lambda function name"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "InferenceFunctionArn",
+            value=self.inference_lambda.function_arn,
+            description="ML Inference Lambda function ARN"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "AnswerEvaluatorFunctionName",
+            value=self.answer_evaluator_lambda.function_name,
+            description="Answer Evaluator Lambda function name"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "AnswerEvaluatorFunctionArn",
+            value=self.answer_evaluator_lambda.function_arn,
+            description="Answer Evaluator Lambda function ARN"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "QuizEngineFunctionName",
+            value=self.quiz_engine_lambda.function_name,
+            description="Quiz Engine Lambda function name"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "QuizEngineFunctionArn",
+            value=self.quiz_engine_lambda.function_arn,
+            description="Quiz Engine Lambda function ARN"
+        )
