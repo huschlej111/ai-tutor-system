@@ -228,7 +228,27 @@ npm test
 
 ## 🚀 Deployment
 
-The system uses AWS CodePipeline for automated deployment:
+### Current Deployment Architecture
+
+The system uses an **iterative deployment approach** for incremental infrastructure development:
+
+```bash
+# Deploy current infrastructure
+cd infrastructure
+cdk deploy
+```
+
+This deploys the active stack (`auth_only_stack.py`) which includes:
+- VPC, RDS PostgreSQL, Cognito User Pool
+- Lambda functions (Auth, Profile, Domain, Progress, Answer Evaluator)
+- API Gateway with Cognito authorizer
+- S3 + CloudFront for frontend hosting
+
+**For complete deployment documentation, see [`infrastructure/README.md`](infrastructure/README.md)**
+
+### Future Production Deployment
+
+The system will transition to automated deployment via AWS CodePipeline:
 - **Development**: Auto-deploy from `develop` branch
 - **Production**: Auto-deploy from `main` branch
 - **Infrastructure**: AWS CDK for infrastructure as code
