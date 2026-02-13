@@ -50,10 +50,11 @@ def create_health_check_event() -> dict:
     }
 
 
+@pytest.mark.unit
 class TestAnswerEvaluationEdgeCases:
     """Test edge cases for answer evaluation"""
     
-    def test_empty_student_answer(self, test_environment):
+    def test_empty_student_answer(self):
         """Test handling of empty student answers"""
         event = create_mock_auth_event({
             'student_answer': '',
@@ -67,7 +68,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'student_answer is required' in body['error']
     
-    def test_whitespace_only_student_answer(self, test_environment):
+    def test_whitespace_only_student_answer(self):
         """Test handling of whitespace-only student answers"""
         event = create_mock_auth_event({
             'student_answer': '   \n\t  ',
@@ -81,7 +82,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'student_answer is required' in body['error']
     
-    def test_empty_correct_answer(self, test_environment):
+    def test_empty_correct_answer(self):
         """Test handling of empty correct answers"""
         event = create_mock_auth_event({
             'student_answer': 'A serverless compute service',
@@ -95,7 +96,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'correct_answer is required' in body['error']
     
-    def test_very_long_student_answer(self, test_environment):
+    def test_very_long_student_answer(self):
         """Test handling of very long student answers"""
         # Create a string longer than MAX_TEXT_LENGTH
         long_answer = 'A' * (EvaluationConfig.MAX_TEXT_LENGTH + 100)
@@ -112,7 +113,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'student_answer too long' in body['error']
     
-    def test_very_long_correct_answer(self, test_environment):
+    def test_very_long_correct_answer(self):
         """Test handling of very long correct answers"""
         # Create a string longer than MAX_TEXT_LENGTH
         long_answer = 'A' * (EvaluationConfig.MAX_TEXT_LENGTH + 100)
@@ -129,7 +130,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'correct_answer too long' in body['error']
     
-    def test_special_characters_in_answers(self, test_environment):
+    def test_special_characters_in_answers(self):
         """Test handling of special characters in answers"""
         special_chars_answer = "A λ-function with ∑ symbols & émojis 🚀 and <script>alert('xss')</script>"
         
@@ -150,7 +151,7 @@ class TestAnswerEvaluationEdgeCases:
             assert isinstance(body['similarity_score'], (int, float))
             assert 0.0 <= body['similarity_score'] <= 1.0
     
-    def test_unicode_characters_in_answers(self, test_environment):
+    def test_unicode_characters_in_answers(self):
         """Test handling of Unicode characters in answers"""
         unicode_answer = "服务器无服务计算 (serverless computing) with 中文 characters"
         
@@ -165,7 +166,7 @@ class TestAnswerEvaluationEdgeCases:
         # Should handle Unicode characters gracefully
         assert response['statusCode'] in [200, 503]  # 503 if model fails, 200 if succeeds
     
-    def test_invalid_threshold_values(self, test_environment):
+    def test_invalid_threshold_values(self):
         """Test handling of invalid threshold values"""
         invalid_thresholds = [-0.1, 1.1, 'invalid']  # Remove None as it should use default
         
@@ -182,7 +183,7 @@ class TestAnswerEvaluationEdgeCases:
             body = json.loads(response['body'])
             assert 'threshold' in body['error'] or 'number' in body['error']
     
-    def test_malformed_json_request(self, test_environment):
+    def test_malformed_json_request(self):
         """Test handling of malformed JSON in request body"""
         user_id = str(uuid.uuid4())
         
@@ -210,7 +211,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'Invalid JSON' in body['error']
     
-    def test_missing_request_body(self, test_environment):
+    def test_missing_request_body(self):
         """Test handling of missing request body"""
         user_id = str(uuid.uuid4())
         
@@ -238,7 +239,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'student_answer is required' in body['error']
     
-    def test_unauthorized_request(self, test_environment):
+    def test_unauthorized_request(self):
         """Test handling of unauthorized requests"""
         event = {
             'httpMethod': 'POST',
@@ -259,7 +260,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'Unauthorized' in body['error']
     
-    def test_unsupported_http_method(self, test_environment):
+    def test_unsupported_http_method(self):
         """Test handling of unsupported HTTP methods"""
         user_id = str(uuid.uuid4())
         
@@ -291,7 +292,7 @@ class TestAnswerEvaluationEdgeCases:
         body = json.loads(response['body'])
         assert 'Endpoint not found' in body['error']
     
-    def test_health_check_endpoint(self, test_environment):
+    def test_health_check_endpoint(self):
         """Test the health check endpoint"""
         event = create_health_check_event()
         

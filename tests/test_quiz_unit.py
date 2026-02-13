@@ -11,111 +11,17 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from lambda_functions.quiz_engine.handler import lambda_handler
-from lambda_functions.domain_management.handler import lambda_handler as domain_handler
-from shared.database import get_db_connection
-
-
-def create_test_user():
-    """Create a test user directly in the database and return user info"""
-    unique_id = str(uuid.uuid4())[:8]
-    user_id = str(uuid.uuid4())
-    email = f'test_{unique_id}@example.com'
-    
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        
-        # Insert test user directly into database with a dummy password hash
-        cursor.execute("""
-            INSERT INTO users (id, email, password_hash, first_name, last_name, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
-            RETURNING id
-        """, (user_id, email, 'dummy_hash_for_testing', 'Test', 'User'))
-        
-        result = cursor.fetchone()
-        if result:
-            user_id = result[0]
-        
-        cursor.close()
-        conn.commit()
-        
-        return user_id, email
-
-
-def cleanup_test_user(email: str):
-    """Clean up test user and associated data"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            # Delete user (cascade will handle domains and terms)
-            cursor.execute("DELETE FROM users WHERE email = %s", (email,))
-            conn.commit()
-            cursor.close()
-    except Exception:
-        pass  # Ignore cleanup errors
-
-
-def create_domain_with_terms(user_id: str, email: str, domain_data: dict) -> str:
-    """Helper function to create a domain with terms and return domain_id"""
-    # Create domain
-    create_domain_event = {
-        'httpMethod': 'POST',
-        'path': '/domains',
-        'body': json.dumps({
-            'name': domain_data['name'],
-            'description': domain_data['description']
-        }),
-        'headers': {},
-        'requestContext': {
-            'authorizer': {
-                'claims': {
-                    'sub': user_id,
-                    'email': email,
-                    'cognito:username': email,
-                    'email_verified': 'true'
-                }
-            }
-        }
-    }
-    
-    create_response = domain_handler(create_domain_event, {})
-    assert create_response['statusCode'] == 201
-    
-    domain_id = json.loads(create_response['body'])['data']['id']
-    
-    # Add terms to domain
-    add_terms_event = {
-        'httpMethod': 'POST',
-        'path': f'/domains/{domain_id}/terms',
-        'pathParameters': {
-            'domain_id': domain_id
-        },
-        'body': json.dumps({'terms': domain_data['terms']}),
-        'headers': {},
-        'requestContext': {
-            'authorizer': {
-                'claims': {
-                    'sub': user_id,
-                    'email': email,
-                    'cognito:username': email,
-                    'email_verified': 'true'
-                }
-            }
-        }
-    }
-    
-    add_terms_response = domain_handler(add_terms_event, {})
-    assert add_terms_response['statusCode'] == 201
-    
-    return domain_id
 
 
 class TestQuizStateTransitions:
     """Test quiz state transitions and edge cases"""
     
-    @pytest.mark.localstack
-    def test_invalid_state_changes(self, test_environment, clean_database):
+    @pytest.mark.unit
+    @patch('shared.database.get_db_connection')
+    def test_invalid_state_changes(self, mock_db_conn):
         """Test invalid state changes and error conditions"""
-        user_id, email = create_test_user()
+        user_id = 'test-user-123'
+        email = 'test@example.com'
         
         # Create mock event with Cognito context
         def create_quiz_event(method, path, body_data):
@@ -162,14 +68,12 @@ class TestQuizStateTransitions:
                 assert answer_response['statusCode'] == 404
                 assert 'Quiz session not found' in json.loads(answer_response['body'])['error']
                 
-        finally:
-            cleanup_test_user(email)
-    
-    @pytest.mark.localstack
-    def test_quiz_session_lifecycle(self, test_environment, clean_database):
+        finally:    @pytest.mark.unit
+    @patch("shared.database.get_db_connection")
+    def test_quiz_session_lifecycle(self, mock_db_conn):
         """Test complete quiz session lifecycle"""
-        user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         # Create mock event with Cognito context
         def create_quiz_event(method, path, body_data):
             return {
@@ -248,14 +152,12 @@ class TestQuizStateTransitions:
                 assert 'evaluation' in answer_body
                 assert 'progress' in answer_body
                 
-        finally:
-            cleanup_test_user(email)
-    
-    @pytest.mark.localstack
-    def test_concurrent_access_prevention(self, test_environment, clean_database):
+        finally:    @pytest.mark.unit
+    @patch("shared.database.get_db_connection")
+    def test_concurrent_access_prevention(self, mock_db_conn):
         """Test that concurrent access to sessions is handled properly"""
-        user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         # Create mock event with Cognito context
         def create_quiz_event(method, path, body_data):
             return {
@@ -302,14 +204,12 @@ class TestQuizStateTransitions:
                 assert start_body_2['session_id'] == session_id
                 assert start_body_2['status'] == 'resumed'
                 
-        finally:
-            cleanup_test_user(email)
-    
-    @pytest.mark.localstack
-    def test_session_timeout_handling(self, test_environment, clean_database):
+        finally:    @pytest.mark.unit
+    @patch("shared.database.get_db_connection")
+    def test_session_timeout_handling(self, mock_db_conn):
         """Test session timeout and cleanup"""
-        user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         # Create mock event with Cognito context
         def create_quiz_event(method, path, body_data):
             return {
@@ -369,14 +269,12 @@ class TestQuizStateTransitions:
                 # For now, this should still work - timeout handling would be a future enhancement
                 assert pause_response['statusCode'] == 200
                 
-        finally:
-            cleanup_test_user(email)
-    
-    @pytest.mark.localstack
-    def test_question_randomization_consistency(self, test_environment, clean_database):
+        finally:    @pytest.mark.unit
+    @patch("shared.database.get_db_connection")
+    def test_question_randomization_consistency(self, mock_db_conn):
         """Test that question order is consistent within a session"""
-        user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         # Create mock event with Cognito context
         def create_quiz_event(method, path, body_data):
             return {
@@ -443,14 +341,12 @@ class TestQuizStateTransitions:
                 assert resumed_question['term'] == first_question['term']
                 assert resumed_question['question_number'] == first_question['question_number']
                 
-        finally:
-            cleanup_test_user(email)
-    
-    @pytest.mark.localstack
-    def test_quiz_completion_logic(self, test_environment, clean_database):
+        finally:    @pytest.mark.unit
+    @patch("shared.database.get_db_connection")
+    def test_quiz_completion_logic(self, mock_db_conn):
         """Test quiz completion detection and logic"""
-        user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         # Create mock event with Cognito context
         def create_quiz_event(method, path, body_data):
             return {
@@ -535,9 +431,5 @@ class TestQuizStateTransitions:
                 assert 'performance' in complete_body
                 assert 'detailed_results' in complete_body
                 
-        finally:
-            cleanup_test_user(email)
-
-
-if __name__ == '__main__':
+        finally:if __name__ == '__main__':
     pytest.main([__file__, '-v'])

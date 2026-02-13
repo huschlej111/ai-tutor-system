@@ -1,5 +1,14 @@
 # Design Document: Quiz Engine and Answer Evaluation Deployment
 
+## Deployment Architecture Reference
+
+**IMPORTANT:** For complete deployment architecture documentation, see [`../../../infrastructure/README.md`](../../../infrastructure/README.md)
+
+This project uses an iterative deployment approach:
+- **Active deployment:** `infrastructure/app_auth_only.py` → `infrastructure/stacks/auth_only_stack.py`
+- **Deploy command:** `cd infrastructure && cdk deploy`
+- The Answer Evaluator Lambda is deployed as a container-based function with the ML model baked in
+
 ## Overview
 
 This document specifies the design for deploying the Quiz Engine and Answer Evaluation system to AWS. The deployment extends the existing Know-It-All Tutor system architecture by adding quiz session management and ML-based answer evaluation capabilities while maintaining the serverless-first, domain-agnostic design principles.

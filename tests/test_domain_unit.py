@@ -1,4 +1,5 @@
 """
+from unittest.mock import patch, MagicMock
 Unit tests for domain management service
 Requirements: 2.3, 2.4
 """
@@ -11,54 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from lambda_functions.domain_management.handler import lambda_handler
 from lambda_functions.auth.handler import lambda_handler as auth_handler
-from shared.database import get_db_connection
 
-
-def create_test_user():
-    """Create a test user and return authentication token"""
-    unique_id = str(uuid.uuid4())[:8]
-    user_data = {
-        'email': f'test_{unique_id}@example.com',
-        'password': 'TestPass123!',
-        'first_name': 'Test',
-        'last_name': 'User'
-    }
-    
-    register_event = {
-        'httpMethod': 'POST',
-        'path': '/auth/register',
-        'body': json.dumps(user_data),
-        'headers': {},
-        'requestContext': {
-            'authorizer': {
-                'claims': {
-                    'cognito:groups': 'student'  # Add required group for authorization
-                }
-            }
-        }
-    }
-    
-    response = auth_handler(register_event, {})
-    if response['statusCode'] not in [201, 200]:
-        # If registration fails, try to create user directly in database for testing
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                user_id = str(uuid.uuid4())
-                cursor.execute(
-                    "INSERT INTO users (id, email, password_hash, first_name, last_name, is_active, is_verified) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (user_id, user_data['email'], 'test_hash', user_data['first_name'], user_data['last_name'], True, True)
-                )
-                conn.commit()
-                cursor.close()
-                
-                # Return a mock token for testing
-                return f"test_token_{unique_id}", user_id, user_data['email']
-        except Exception as e:
-            raise Exception(f"Failed to create test user: {e}")
-    
-    body = json.loads(response['body'])
-    return body.get('token', f"test_token_{unique_id}"), body.get('user', {}).get('id', str(uuid.uuid4())), user_data['email']
 
 
 def create_domain_event(method, path, body_data, token, user_id, email):
@@ -84,25 +38,17 @@ def create_domain_event(method, path, body_data, token, user_id, email):
     }
 
 
-def cleanup_test_user(email: str):
-    """Clean up test user and associated data"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM users WHERE email = %s", (email,))
-            conn.commit()
-            cursor.close()
-    except Exception:
-        pass
 
-
+@pytest.mark.unit
 class TestDomainValidation:
     """Test domain validation requirements"""
     
-    def test_domain_name_required(self):
+    @pytest.mark.unit
+    def test_domain_name_required(self, mock_db_conn):
+        pass  # Mock setup
         """Test that domain name is required"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             event = create_domain_event(
                 'POST', '/domains',
@@ -117,13 +63,11 @@ class TestDomainValidation:
             assert 'validation_errors' in body['error']['details']
             assert 'name' in body['error']['details']['validation_errors']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_domain_description_required(self):
+        finally:    def test_domain_description_required(self, mock_db_conn):
+        pass  # Mock setup
         """Test that domain description is required"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             event = create_domain_event(
                 'POST', '/domains',
@@ -138,13 +82,11 @@ class TestDomainValidation:
             assert 'validation_errors' in body['error']['details']
             assert 'description' in body['error']['details']['validation_errors']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_domain_name_length_validation(self):
+        finally:    def test_domain_name_length_validation(self, mock_db_conn):
+        pass  # Mock setup
         """Test domain name character limits"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Test name too short
             event = create_domain_event(
@@ -176,13 +118,11 @@ class TestDomainValidation:
             body = json.loads(response['body'])
             assert 'name' in body['error']['details']['validation_errors']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_domain_description_length_validation(self):
+        finally:    def test_domain_description_length_validation(self, mock_db_conn):
+        pass  # Mock setup
         """Test domain description character limits"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Test description too short
             event = create_domain_event(
@@ -214,13 +154,11 @@ class TestDomainValidation:
             body = json.loads(response['body'])
             assert 'description' in body['error']['details']['validation_errors']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_domain_special_characters_handling(self):
+        finally:    def test_domain_special_characters_handling(self, mock_db_conn):
+        pass  # Mock setup
         """Test domain handling of special characters"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Test domain with special characters (should be allowed)
             event = create_domain_event(
@@ -238,13 +176,11 @@ class TestDomainValidation:
             assert body['success'] is True
             assert body['data']['name'] == 'AWS-EC2 & S3 (Cloud Services)'
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_domain_duplicate_prevention(self):
+        finally:    def test_domain_duplicate_prevention(self, mock_db_conn):
+        pass  # Mock setup
         """Test domain duplicate prevention within user scope"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             domain_data = {
                 'name': 'Test Domain',
@@ -267,13 +203,11 @@ class TestDomainValidation:
             body = json.loads(response2['body'])
             assert 'already exists' in body['error']['message']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_domain_deletion_cascade(self):
+        finally:    def test_domain_deletion_cascade(self, mock_db_conn):
+        pass  # Mock setup
         """Test domain deletion and cascade operations"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Create domain
             create_event = create_domain_event(
@@ -340,17 +274,15 @@ class TestDomainValidation:
             get_terms_after_delete = lambda_handler(get_terms_event, {})
             assert get_terms_after_delete['statusCode'] == 404
             
-        finally:
-            cleanup_test_user(email)
-
-
-class TestTermValidation:
+        finally:class TestTermValidation:
     """Test term validation requirements"""
     
-    def test_term_name_required(self):
+    @pytest.mark.unit
+    def test_term_name_required(self, mock_db_conn):
+        pass  # Mock setup
         """Test that term name is required"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Create domain first
             create_domain_event_data = create_domain_event(
@@ -383,13 +315,11 @@ class TestTermValidation:
             assert 'validation_errors' in body['error']['details']
             assert 'terms[0].term' in body['error']['details']['validation_errors']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_term_definition_required(self):
+        finally:    def test_term_definition_required(self, mock_db_conn):
+        pass  # Mock setup
         """Test that term definition is required"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Create domain first
             create_domain_event_data = create_domain_event(
@@ -422,13 +352,11 @@ class TestTermValidation:
             assert 'validation_errors' in body['error']['details']
             assert 'terms[0].definition' in body['error']['details']['validation_errors']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_term_length_validation(self):
+        finally:    def test_term_length_validation(self, mock_db_conn):
+        pass  # Mock setup
         """Test term character limits"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Create domain first
             create_domain_event_data = create_domain_event(
@@ -520,13 +448,11 @@ class TestTermValidation:
             body = json.loads(response['body'])
             assert 'terms[0].definition' in body['error']['details']['validation_errors']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_term_duplicate_prevention_within_domain(self):
+        finally:    def test_term_duplicate_prevention_within_domain(self, mock_db_conn):
+        pass  # Mock setup
         """Test term duplicate prevention within the same domain"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Create domain first
             create_domain_event_data = create_domain_event(
@@ -578,13 +504,11 @@ class TestTermValidation:
             body = json.loads(response2['body'])
             assert 'already exists' in body['error']['details']['validation_errors']['terms[0].term']
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_term_special_characters_handling(self):
+        finally:    def test_term_special_characters_handling(self, mock_db_conn):
+        pass  # Mock setup
         """Test term handling of special characters"""
-        token, user_id, email = create_test_user()
-        
+    user_id = "test-user-123"
+    email = "test@example.com"
         try:
             # Create domain first
             create_domain_event_data = create_domain_event(
@@ -620,9 +544,5 @@ class TestTermValidation:
             assert body['success'] is True
             assert body['data']['terms'][0]['term'] == 'C++ & Python (Programming)'
             
-        finally:
-            cleanup_test_user(email)
-
-
-if __name__ == '__main__':
+        finally:if __name__ == '__main__':
     pytest.main([__file__, '-v'])

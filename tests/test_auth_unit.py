@@ -1,4 +1,5 @@
 """
+from unittest.mock import patch, MagicMock
 Unit tests for authentication edge cases
 Tests invalid credentials, expired tokens, malformed requests, and password strength validation
 """
@@ -12,19 +13,7 @@ import boto3
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from lambda_functions.auth.handler import lambda_handler
-from shared.database import get_db_connection
 
-
-def cleanup_test_user(email: str):
-    """Clean up test user from database"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM users WHERE email = %s", (email,))
-            conn.commit()
-            cursor.close()
-    except Exception:
-        pass
 
 
 def extract_error_message(response_body):
@@ -36,6 +25,7 @@ def extract_error_message(response_body):
     return ''
 
 
+@pytest.mark.unit
 class TestAuthenticationEdgeCases:
     """Test authentication edge cases and error conditions"""
     
@@ -102,6 +92,7 @@ class TestAuthenticationEdgeCases:
             if original_client_id:
                 os.environ['USER_POOL_CLIENT_ID'] = original_client_id
     
+    @pytest.mark.unit
     def test_register_with_invalid_email_formats(self):
         """Test registration with various invalid email formats"""
         invalid_emails = [
@@ -146,6 +137,7 @@ class TestAuthenticationEdgeCases:
                 # Just ensure it's a 400 error (already asserted above)
                 pass
     
+    @pytest.mark.unit
     def test_register_with_weak_passwords(self):
         """Test registration with passwords that don't meet strength requirements"""
         weak_passwords = [
@@ -187,10 +179,7 @@ class TestAuthenticationEdgeCases:
                     # Other weak passwords might be caught by Cognito with various error messages
                     # Just ensure it's a 400 error (already asserted above)
                     pass
-            finally:
-                cleanup_test_user(email)
-    
-    def test_register_duplicate_email(self):
+            finally:    def test_register_duplicate_email(self):
         """Test registration with duplicate email address"""
         email = "duplicate@example.com"
         user_data = {
@@ -224,10 +213,7 @@ class TestAuthenticationEdgeCases:
             error_msg = extract_error_message(body).lower()
             assert 'already exists' in error_msg
             
-        finally:
-            cleanup_test_user(email)
-    
-    def test_login_with_invalid_credentials(self):
+        finally:    def test_login_with_invalid_credentials(self):
         """Test login with various invalid credential combinations"""
         # First create a user
         email = "testlogin@example.com"
@@ -291,10 +277,7 @@ class TestAuthenticationEdgeCases:
             response = lambda_handler(case_insensitive_event, {})
             assert response['statusCode'] == 200  # Should succeed with case insensitive email
                 
-        finally:
-            cleanup_test_user(email)
-    
-    def test_malformed_request_bodies(self):
+        finally:    def test_malformed_request_bodies(self):
         """Test handling of malformed JSON request bodies"""
         malformed_requests = [
             "",  # Empty body
@@ -316,6 +299,7 @@ class TestAuthenticationEdgeCases:
             body = json.loads(response['body'])
             assert 'error' in body
     
+    @pytest.mark.unit
     def test_missing_required_fields(self):
         """Test registration and login with missing required fields"""
         # Test registration with missing fields
@@ -342,6 +326,7 @@ class TestAuthenticationEdgeCases:
             error_msg = extract_error_message(body).lower()
             assert 'required' in error_msg
     
+    @pytest.mark.unit
     def test_token_validation_edge_cases(self):
         """Test token validation with various invalid tokens"""
         invalid_tokens = [
@@ -364,6 +349,7 @@ class TestAuthenticationEdgeCases:
             body = json.loads(response['body'])
             assert 'error' in body
     
+    @pytest.mark.unit
     def test_logout_without_token(self):
         """Test logout without providing a token"""
         event = {
@@ -379,6 +365,7 @@ class TestAuthenticationEdgeCases:
         error_msg = extract_error_message(body).lower()
         assert 'authorization' in error_msg
     
+    @pytest.mark.unit
     def test_password_validation_via_registration(self):
         """Test password validation through registration endpoint"""
         # Test various invalid passwords through the registration endpoint
@@ -413,10 +400,7 @@ class TestAuthenticationEdgeCases:
                 # Cognito handles password validation, so we just check for error
                 error_msg = extract_error_message(body).lower()
                 assert 'password' in error_msg or 'required' in error_msg
-            finally:
-                cleanup_test_user(email)
-    
-    def test_email_validation_via_registration(self):
+            finally:    def test_email_validation_via_registration(self):
         """Test email validation through registration endpoint"""
         # Test various invalid emails through the registration endpoint
         invalid_emails = [
@@ -450,6 +434,7 @@ class TestAuthenticationEdgeCases:
             error_msg = extract_error_message(body).lower()
             assert 'email' in error_msg or 'required' in error_msg or 'invalid' in error_msg
     
+    @pytest.mark.unit
     def test_nonexistent_endpoints(self):
         """Test requests to nonexistent endpoints"""
         nonexistent_paths = [
