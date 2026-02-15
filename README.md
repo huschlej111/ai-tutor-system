@@ -49,6 +49,7 @@ To empower students of any subject by providing an interactive, web-based learni
 ### Development Environment
 - **Frontend URL**: https://d1o8fugfe04j49.cloudfront.net
 - **API URL**: https://o06264kkzj.execute-api.us-east-1.amazonaws.com/prod/
+- **CloudWatch Dashboard**: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=TutorSystem-dev
 - **Status**: Active (AWS Free Tier)
 
 ## 🚀 Key Features
