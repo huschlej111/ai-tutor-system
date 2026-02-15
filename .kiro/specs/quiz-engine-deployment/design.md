@@ -5,8 +5,8 @@
 **IMPORTANT:** For complete deployment architecture documentation, see [`../../../infrastructure/README.md`](../../../infrastructure/README.md)
 
 This project uses an iterative deployment approach:
-- **Active deployment:** `infrastructure/app_auth_only.py` → `infrastructure/stacks/auth_only_stack.py`
-- **Deploy command:** `cd infrastructure && cdk deploy`
+- **Active deployment:** `infrastructure/app.py` → `infrastructure/stacks/auth_only_stack.py` + `infrastructure/stacks/simple_monitoring_stack.py`
+- **Deploy command:** `cd infrastructure && cdk deploy --all`
 - The Answer Evaluator Lambda is deployed as a container-based function with the ML model baked in
 
 ## Overview
@@ -3430,3 +3430,9 @@ This design document specifies the complete architecture for deploying the Quiz 
 8. **Enables frontend integration** - Complete API client and React components
 
 The design maintains the domain-agnostic, serverless-first principles of the tutor system while adding powerful quiz and evaluation capabilities.
+
+---
+
+## Development History Note
+
+During iterative development, this project originally used `app_auth_only.py` as the deployment entry point. This has been renamed to `app.py` (the standard CDK convention) as of Phase 6 completion. All deployment references in this document have been updated accordingly.

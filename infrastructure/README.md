@@ -11,11 +11,11 @@ This directory contains AWS CDK infrastructure definitions for the Know-It-All T
 ```
 cdk deploy (from infrastructure/)
     ↓
-infrastructure/app_auth_only.py  ← ACTIVE APP
+infrastructure/app.py  ← ACTIVE APP
     ↓
 infrastructure/stacks/auth_only_stack.py  ← ACTIVE STACK
     ↓
-Creates: TutorSystemStack-dev
+Creates: TutorSystemStack-dev + MonitoringStack-dev
 ```
 
 **This is what you're using now for iterative development.**
@@ -25,7 +25,7 @@ Creates: TutorSystemStack-dev
 ```
 scripts/deploy_to_aws.py
     ↓
-infrastructure/app.py  ← FUTURE APP
+infrastructure/app.py.deprecated  ← ORIGINAL MULTI-STACK DESIGN
     ↓
 infrastructure/stacks/tutor_system_stack.py  ← FUTURE STACK
     ↓
@@ -38,13 +38,14 @@ Creates: Multiple stacks (Pipeline, Security, Main, Frontend, Monitoring)
 
 ### Active Files (Current Workflow)
 
-- **`app_auth_only.py`** - Simple CDK app entry point for iterative development
+- **`app.py`** - CDK app entry point for iterative development
 - **`stacks/auth_only_stack.py`** - Main stack with all infrastructure (VPC, RDS, Cognito, Lambda, API Gateway, etc.)
-- Uses stack name: `TutorSystemStack-dev`
+- **`stacks/simple_monitoring_stack.py`** - Monitoring with CloudWatch dashboard, alarms, SNS, and cost budgets
+- Uses stack names: `TutorSystemStack-dev` and `MonitoringStack-dev`
 
-### Future Files (Not Active Yet)
+### Reference Files (Not Active)
 
-- **`app.py`** - Complex multi-stack orchestrator for production
+- **`app.py.deprecated`** - Original multi-stack orchestrator design (kept for reference)
 - **`stacks/tutor_system_stack.py`** - Future main application stack
 - **`stacks/pipeline_stack.py`** - CI/CD pipeline
 - **`stacks/security_monitoring_stack.py`** - Security monitoring
@@ -60,13 +61,13 @@ Creates: Multiple stacks (Pipeline, Security, Main, Frontend, Monitoring)
 
 ```bash
 cd infrastructure
-cdk deploy --app "python app_auth_only.py" --require-approval never
+cdk deploy --app "python app.py" --require-approval never
 ```
 
 This will:
-1. Use `app_auth_only.py` as the entry point
-2. Deploy `auth_only_stack.py` 
-3. Create/update the `TutorSystemStack-dev` stack
+1. Use `app.py` as the entry point
+2. Deploy `auth_only_stack.py` and `simple_monitoring_stack.py`
+3. Create/update the `TutorSystemStack-dev` and `MonitoringStack-dev` stacks
 4. Build and deploy any Docker-based Lambdas (like answer-evaluator)
 
 **Why from infrastructure/ directory?**
@@ -215,3 +216,9 @@ The current stack is optimized for AWS Free Tier:
 - [CDK Python Reference](https://docs.aws.amazon.com/cdk/api/v2/python/)
 - [Lambda Container Images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
 - Project specs: `../kiro-specs/`
+
+---
+
+## Development History Note
+
+During iterative development, this project originally used `app_auth_only.py` as the deployment entry point. This has been renamed to `app.py` (the standard CDK convention). The original multi-stack design from `app.py` has been preserved as `app.py.deprecated` for reference on separation of concerns patterns.

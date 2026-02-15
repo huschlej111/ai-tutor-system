@@ -14,4 +14,4 @@ docker cp temp-layer:/asset/python ./python
 docker rm temp-layer
 
 echo "✅ Lambda layer built successfully in ./python/"
-echo "Deploy with: cdk deploy --app 'python app_auth_only.py' TutorSystemStack-dev"
+echo "Deploy with: cdk deploy --app 'python app.py' TutorSystemStack-dev"
