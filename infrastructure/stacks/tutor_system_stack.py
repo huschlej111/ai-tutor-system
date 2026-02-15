@@ -1,1505 +1,810 @@
-"""
-Main CDK Stack for Know-It-All Tutor System
-Defines Lambda functions, API Gateway, Aurora Serverless, and supporting resources
-"""
-import json
 import aws_cdk as cdk
 from aws_cdk import (
     Stack,
     aws_lambda as _lambda,
     aws_apigateway as apigateway,
-    aws_rds as rds,
-    aws_ec2 as ec2,
-    aws_secretsmanager as secretsmanager,
-    aws_iam as iam,
-    aws_s3 as s3,
     aws_cognito as cognito,
+    aws_ec2 as ec2,
+    aws_rds as rds,
+    aws_secretsmanager as secretsmanager,
+    aws_s3 as s3,
+    aws_s3_deployment as s3deploy,
+    aws_cloudfront as cloudfront,
+    aws_cloudfront_origins as origins,
+    aws_iam as iam,
+    aws_ecr as ecr,
+    aws_ecr_assets as ecr_assets,
     Duration,
     RemovalPolicy
 )
 from constructs import Construct
-from typing import Dict, Any
-from security.encryption_config import EncryptionConfig
-from security.iam_policies import IAMPolicyGenerator
-
 
 class TutorSystemStack(Stack):
-    """Main stack for the tutor system infrastructure"""
-    
-    def __init__(self, scope: Construct, construct_id: str, environment: str, **kwargs) -> None:
+    def __init__(self, scope, construct_id, **kwargs):
         super().__init__(scope, construct_id, **kwargs)
         
-        self._environment = environment
-        
-        # Create condition for production environment
-        # Support both "prod" and "production" for compatibility
-        self.is_production = cdk.CfnCondition(
+        # Step 1: Create VPC (Free Tier Optimized - Single AZ for instances)
+        self.vpc = ec2.Vpc(
             self,
-            "IsProduction",
-            expression=cdk.Fn.condition_or(
-                cdk.Fn.condition_equals(environment, "prod"),
-                cdk.Fn.condition_equals(environment, "production")
-            )
-        )
-        
-        # Initialize security configurations
-        self.encryption_config = EncryptionConfig(self, environment)
-        self.iam_generator = IAMPolicyGenerator(environment, self.account, self.region)
-        
-        # Create VPC for Aurora Serverless
-        self.vpc = self._create_vpc()
-        
-        # Create database secrets with encryption
-        self.db_secret = self._create_database_secret()
-        
-        # Create VPC for Aurora Serverless
-        self.vpc = self._create_vpc()
-        
-        # Create Aurora Serverless cluster with encryption
-        self.aurora_cluster = self._create_aurora_cluster()
-        
-        # Create Lambda layers
-        self.common_layer = self._create_common_layer()
-        self.ml_model_layer = self._create_ml_model_layer()
-        
-        # Create Lambda functions with security configurations
-        self.lambda_functions = self._create_lambda_functions()
-        
-        # Create Cognito User Pool and User Pool Client (after Lambda functions)
-        self.user_pool = self._create_user_pool()
-        self.user_pool_client = self._create_user_pool_client()
-        
-        # Create Cognito User Pool Groups for role-based access control
-        self.user_pool_groups = self._create_user_pool_groups()
-        
-        # Create API Gateway with security headers
-        self.api_gateway = self._create_api_gateway()
-        
-        # Set up API security monitoring
-        self._setup_api_security_monitoring()
-        
-        # Create S3 bucket for artifacts with encryption
-        self.artifacts_bucket = self._create_artifacts_bucket()
-        
-        # Output important values
-        self._create_outputs()
-    
-    @property
-    def environment(self) -> str:
-        """Get the environment name"""
-        return self._environment
-    
-    def _create_vpc(self) -> ec2.Vpc:
-        """Create VPC for Aurora Serverless and Lambda functions"""
-        return ec2.Vpc(
-            self,
-            "TutorSystemVPC",
-            max_azs=2,  # Aurora Serverless requires at least 2 AZs
-            nat_gateways=0,  # Use VPC endpoints instead for cost optimization
+            "TutorVPC",
+            max_azs=2,  # Need 2 AZs for RDS subnet group requirement (subnets are free)
+            nat_gateways=0,  # No NAT Gateway ($32/month cost)
             subnet_configuration=[
-                ec2.SubnetConfiguration(
-                    name="Private",
-                    subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
-                    cidr_mask=24
-                ),
                 ec2.SubnetConfiguration(
                     name="Public",
                     subnet_type=ec2.SubnetType.PUBLIC,
                     cidr_mask=24
+                ),
+                ec2.SubnetConfiguration(
+                    name="Private",
+                    subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,  # No NAT needed
+                    cidr_mask=24
                 )
             ]
         )
-    
-    def _create_database_secret(self) -> secretsmanager.Secret:
-        """Create secret for database credentials"""
-        return secretsmanager.Secret(
+        
+        # Step 1.5: Create Security Groups
+        # RDS Security Group - allows PostgreSQL access from Lambda
+        self.rds_security_group = ec2.SecurityGroup(
             self,
-            "DatabaseSecret",
-            description="Database credentials for tutor system",
-            generate_secret_string=secretsmanager.SecretStringGenerator(
-                secret_string_template='{"username": "tutoruser"}',
-                generate_string_key="password",
-                exclude_characters=" %+~`#$&*()|[]{}:;<>?!'/\"\\",
-                password_length=32
-            )
+            "RDSSecurityGroup",
+            vpc=self.vpc,
+            description="Security group for RDS PostgreSQL",
+            allow_all_outbound=False
         )
-    
-    def _create_user_pool(self) -> cognito.UserPool:
-        """Create Cognito User Pool for authentication"""
-        return cognito.UserPool(
+        
+        # Lambda Security Group (for future use when Lambda moves to VPC)
+        self.lambda_security_group = ec2.SecurityGroup(
             self,
-            "TutorSystemUserPool",
-            user_pool_name=f"know-it-all-tutor-users-{self.environment}",
-            # Sign-in configuration
-            sign_in_aliases=cognito.SignInAliases(
-                email=True,
-                username=False
+            "LambdaSecurityGroup",
+            vpc=self.vpc,
+            description="Security group for Lambda functions",
+            allow_all_outbound=True
+        )
+        
+        # Allow Lambda to connect to RDS on PostgreSQL port
+        self.rds_security_group.add_ingress_rule(
+            peer=self.lambda_security_group,
+            connection=ec2.Port.tcp(5432),
+            description="Allow Lambda to access RDS PostgreSQL"
+        )
+        
+        # Step 1.6: Create VPC Endpoints (Free Tier - no NAT Gateway needed)
+        # Secrets Manager endpoint - Lambda needs to read DB credentials
+        self.secrets_endpoint = ec2.InterfaceVpcEndpoint(
+            self,
+            "SecretsManagerEndpoint",
+            vpc=self.vpc,
+            service=ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+            private_dns_enabled=True,
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            security_groups=[self.lambda_security_group]
+        )
+        
+        # Step 1.7: Create database credentials in Secrets Manager
+        self.db_credentials = secretsmanager.Secret(
+            self,
+            "DBCredentials",
+            secret_name="tutor-system/db-credentials-dev",
+            description="RDS PostgreSQL credentials for tutor system",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                secret_string_template='{"username":"tutor_admin"}',
+                generate_string_key="password",
+                exclude_characters="\"@/\\ '",
+                password_length=32
             ),
-            # Password policy
+            removal_policy=RemovalPolicy.DESTROY  # Dev only - delete with stack
+        )
+        
+        # Step 1.8: Create RDS PostgreSQL (Free Tier - t4g.micro)
+        self.database = rds.DatabaseInstance(
+            self,
+            "TutorDatabase",
+            engine=rds.DatabaseInstanceEngine.postgres(
+                version=rds.PostgresEngineVersion.VER_16_6  # Latest stable
+            ),
+            instance_type=ec2.InstanceType.of(
+                ec2.InstanceClass.BURSTABLE4_GRAVITON,  # t4g
+                ec2.InstanceSize.MICRO  # Free tier eligible
+            ),
+            vpc=self.vpc,
+            vpc_subnets=ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
+            ),
+            security_groups=[self.rds_security_group],
+            credentials=rds.Credentials.from_secret(self.db_credentials),
+            database_name="tutor_system",
+            allocated_storage=20,  # Free tier: 20GB
+            max_allocated_storage=20,  # Disable autoscaling to stay in free tier
+            storage_encrypted=True,  # Always encrypt
+            backup_retention=Duration.days(7),  # Free tier: 7 days
+            deletion_protection=False,  # Dev environment
+            removal_policy=RemovalPolicy.DESTROY,  # Dev only
+            publicly_accessible=False,  # Security best practice
+            multi_az=False,  # Single AZ for free tier
+        )
+        
+        # Step 2: Create Cognito User Pool
+        self.user_pool = cognito.UserPool(
+            self,
+            "AuthUserPool",
+            user_pool_name="know-it-all-tutor-dev",
+            # Users sign in with email, not username
+            sign_in_aliases=cognito.SignInAliases(email=True),
+            # Password requirements
             password_policy=cognito.PasswordPolicy(
                 min_length=8,
                 require_lowercase=True,
                 require_uppercase=True,
                 require_digits=True,
-                require_symbols=True,
-                temp_password_validity=Duration.days(7)
+                require_symbols=True
             ),
-            # Account recovery
-            account_recovery=cognito.AccountRecovery.EMAIL_ONLY,
-            # Email configuration
-            email=cognito.UserPoolEmail.with_cognito(
-                reply_to="noreply@know-it-all-tutor.com"
-            ),
-            # MFA configuration
-            mfa=cognito.Mfa.OPTIONAL,
-            mfa_second_factor=cognito.MfaSecondFactor(
-                sms=True,
-                otp=True
-            ),
-            # User attributes
-            standard_attributes=cognito.StandardAttributes(
-                email=cognito.StandardAttribute(
-                    required=True,
-                    mutable=True
-                ),
-                given_name=cognito.StandardAttribute(
-                    required=False,
-                    mutable=True
-                ),
-                family_name=cognito.StandardAttribute(
-                    required=False,
-                    mutable=True
-                )
-            ),
-            # Auto verification
-            auto_verify=cognito.AutoVerifiedAttrs(
-                email=True
-            ),
-            # User invitation
-            user_invitation=cognito.UserInvitationConfig(
-                email_subject="Welcome to Know-It-All Tutor!",
-                email_body="Hello {username}, your temporary password is {####}",
-                sms_message="Your Know-It-All Tutor verification code is {####}"
-            ),
-            # User verification
-            user_verification=cognito.UserVerificationConfig(
-                email_subject="Verify your Know-It-All Tutor account",
-                email_body="Thank you for signing up! Your verification code is {####}",
-                email_style=cognito.VerificationEmailStyle.CODE,
-                sms_message="Your Know-It-All Tutor verification code is {####}"
-            ),
-            # Device tracking
-            device_tracking=cognito.DeviceTracking(
-                challenge_required_on_new_device=True,
-                device_only_remembered_on_user_prompt=False
-            ),
-            # Advanced security
-            advanced_security_mode=cognito.AdvancedSecurityMode.ENFORCED,
-            # Lambda triggers
+            # NO EMAIL VERIFICATION for dev - users are immediately confirmed
+            auto_verify=cognito.AutoVerifiedAttrs(),  # Empty = no verification
+            # Allow users to sign up themselves (required for registration endpoint)
+            self_sign_up_enabled=True,
+            # Lambda triggers for auto-confirmation
             lambda_triggers=cognito.UserPoolTriggers(
-                pre_sign_up=self.lambda_functions["cognito_pre_signup"],
-                post_confirmation=self.lambda_functions["cognito_post_confirmation"],
-                pre_authentication=self.lambda_functions["cognito_pre_authentication"],
-                post_authentication=self.lambda_functions["cognito_post_authentication"]
+                pre_sign_up=None  # Will be set after Lambda creation
             ),
-            # Deletion protection
-            deletion_protection=self.environment == "production",
-            removal_policy=RemovalPolicy.DESTROY if self.environment == "development" else RemovalPolicy.RETAIN
+            # Clean up when stack is deleted (dev environment)
+            removal_policy=cdk.RemovalPolicy.DESTROY
         )
-    
-    def _create_user_pool_client(self) -> cognito.UserPoolClient:
-        """Create Cognito User Pool Client for web application"""
-        return cognito.UserPoolClient(
+
+        
+        # Step 3: Create User Pool Client (allows your app to connect)
+        self.user_pool_client = cognito.UserPoolClient(
             self,
-            "TutorSystemUserPoolClient",
+            "AuthUserPoolClient",
             user_pool=self.user_pool,
-            user_pool_client_name=f"know-it-all-tutor-web-client-{self.environment}",
-            # Authentication flows
+            user_pool_client_name="know-it-all-tutor-web-client-dev",
+            # Allow username/password authentication
             auth_flows=cognito.AuthFlow(
-                user_srp=True,
-                user_password=True,  # For migration purposes
-                admin_user_password=False,
-                custom=False
+                user_password=True,
+                user_srp=True
             ),
-            # Token validity
+            # Token validity periods
             access_token_validity=Duration.hours(1),
             id_token_validity=Duration.hours(1),
             refresh_token_validity=Duration.days(30),
-            # OAuth configuration
-            o_auth=cognito.OAuthSettings(
-                flows=cognito.OAuthFlows(
-                    authorization_code_grant=True,
-                    implicit_code_grant=False
-                ),
-                scopes=[
-                    cognito.OAuthScope.OPENID,
-                    cognito.OAuthScope.EMAIL,
-                    cognito.OAuthScope.PROFILE
-                ],
-                callback_urls=[
-                    f"https://app.know-it-all-tutor.com/auth/callback",
-                    "http://localhost:3000/auth/callback"  # Development
-                ],
-                logout_urls=[
-                    f"https://app.know-it-all-tutor.com/auth/logout",
-                    "http://localhost:3000/auth/logout"    # Development
-                ]
-            ),
-            # Security
-            generate_secret=False,  # Public client for web applications
-            prevent_user_existence_errors=True,
-            # Supported identity providers
-            supported_identity_providers=[
-                cognito.UserPoolClientIdentityProvider.COGNITO
-            ]
-        )
-    
-    def _create_user_pool_groups(self) -> Dict[str, cognito.CfnUserPoolGroup]:
-        """Create Cognito User Pool Groups for role-based access control"""
-        groups = {}
-        
-        # Admin group for administrative functions
-        groups["admin"] = cognito.CfnUserPoolGroup(
-            self,
-            "AdminGroup",
-            user_pool_id=self.user_pool.user_pool_id,
-            group_name="admin",
-            description="Administrators with full system access",
-            precedence=1,  # Higher precedence (lower number)
-            role_arn=self._create_admin_role().role_arn
+            # Don't generate a client secret (for web apps)
+            generate_secret=False
         )
         
-        # Instructor group for content creation and management
-        groups["instructor"] = cognito.CfnUserPoolGroup(
+        # Step 3.5: Create Pre-SignUp Lambda Trigger (auto-confirm users)
+        self.pre_signup_lambda = _lambda.Function(
             self,
-            "InstructorGroup",
-            user_pool_id=self.user_pool.user_pool_id,
-            group_name="instructor",
-            description="Instructors who can create and manage learning content",
-            precedence=2,
-            role_arn=self._create_instructor_role().role_arn
+            "PreSignUpTrigger",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/cognito_pre_signup"),
+            timeout=Duration.seconds(10),
+            memory_size=128,
+            description="Cognito Pre-SignUp trigger - auto-confirms users"
         )
         
-        # Student group for regular users (default)
-        groups["student"] = cognito.CfnUserPoolGroup(
-            self,
-            "StudentGroup",
-            user_pool_id=self.user_pool.user_pool_id,
-            group_name="student",
-            description="Students with access to learning features",
-            precedence=3,
-            role_arn=self._create_student_role().role_arn
+        # Grant Cognito permission to invoke the Lambda
+        self.pre_signup_lambda.add_permission(
+            "CognitoInvoke",
+            principal=iam.ServicePrincipal("cognito-idp.amazonaws.com"),
+            source_arn=self.user_pool.user_pool_arn
         )
         
-        return groups
-    
-    def _create_admin_role(self) -> iam.Role:
-        """Create IAM role for admin users"""
-        return iam.Role(
+        # Add trigger to User Pool
+        self.user_pool.add_trigger(
+            cognito.UserPoolOperation.PRE_SIGN_UP,
+            self.pre_signup_lambda
+        )
+        
+
+        # Step 3.5: Create Lambda Layer for shared utilities
+        # Uses Docker to build layer with Amazon Linux 2023 for Lambda compatibility
+        self.shared_layer = _lambda.LayerVersion(
             self,
-            "AdminRole",
-            assumed_by=iam.FederatedPrincipal(
-                "cognito-identity.amazonaws.com",
-                conditions={
-                    "StringEquals": {
-                        "cognito-identity.amazonaws.com:aud": self.user_pool.user_pool_id
-                    },
-                    "ForAnyValue:StringLike": {
-                        "cognito-identity.amazonaws.com:amr": "authenticated"
-                    }
-                }
-            ),
-            inline_policies={
-                "AdminPolicy": iam.PolicyDocument(
-                    statements=[
-                        # Full access to batch upload operations
-                        iam.PolicyStatement(
-                            effect=iam.Effect.ALLOW,
-                            actions=[
-                                "execute-api:Invoke"
-                            ],
-                            resources=[
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/POST/batch/*",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/GET/batch/*",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/DELETE/batch/*"
-                            ]
-                        ),
-                        # Access to user management operations
-                        iam.PolicyStatement(
-                            effect=iam.Effect.ALLOW,
-                            actions=[
-                                "cognito-idp:AdminGetUser",
-                                "cognito-idp:AdminListGroupsForUser",
-                                "cognito-idp:AdminAddUserToGroup",
-                                "cognito-idp:AdminRemoveUserFromGroup",
-                                "cognito-idp:ListUsers"
-                            ],
-                            resources=[self.user_pool.user_pool_arn]
-                        )
+            "SharedUtilitiesLayer",
+            code=_lambda.Code.from_asset(
+                "lambda_layer",
+                bundling=cdk.BundlingOptions(
+                    image=_lambda.Runtime.PYTHON_3_12.bundling_image,
+                    command=[
+                        "bash", "-c",
+                        "pip install -r requirements.txt -t /asset-output/python && "
+                        "cp -r python/* /asset-output/python/"
                     ]
                 )
-            }
-        )
-    
-    def _create_instructor_role(self) -> iam.Role:
-        """Create IAM role for instructor users"""
-        return iam.Role(
-            self,
-            "InstructorRole",
-            assumed_by=iam.FederatedPrincipal(
-                "cognito-identity.amazonaws.com",
-                conditions={
-                    "StringEquals": {
-                        "cognito-identity.amazonaws.com:aud": self.user_pool.user_pool_id
-                    },
-                    "ForAnyValue:StringLike": {
-                        "cognito-identity.amazonaws.com:amr": "authenticated"
-                    }
-                }
             ),
-            inline_policies={
-                "InstructorPolicy": iam.PolicyDocument(
-                    statements=[
-                        # Access to content creation and batch upload
-                        iam.PolicyStatement(
-                            effect=iam.Effect.ALLOW,
-                            actions=[
-                                "execute-api:Invoke"
-                            ],
-                            resources=[
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/POST/batch/validate",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/POST/batch/upload",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/GET/batch/history"
-                            ]
-                        )
-                    ]
-                )
-            }
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+            description="Shared utilities for authentication and security (Docker build)"
         )
-    
-    def _create_student_role(self) -> iam.Role:
-        """Create IAM role for student users"""
-        return iam.Role(
+
+        # Step 4: Create Lambda B (DB Proxy) - Inside VPC
+        self.db_proxy_lambda = _lambda.Function(
             self,
-            "StudentRole",
-            assumed_by=iam.FederatedPrincipal(
-                "cognito-identity.amazonaws.com",
-                conditions={
-                    "StringEquals": {
-                        "cognito-identity.amazonaws.com:aud": self.user_pool.user_pool_id
-                    },
-                    "ForAnyValue:StringLike": {
-                        "cognito-identity.amazonaws.com:amr": "authenticated"
-                    }
-                }
-            ),
-            inline_policies={
-                "StudentPolicy": iam.PolicyDocument(
-                    statements=[
-                        # Standard learning access (domains, quiz, progress)
-                        iam.PolicyStatement(
-                            effect=iam.Effect.ALLOW,
-                            actions=[
-                                "execute-api:Invoke"
-                            ],
-                            resources=[
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/GET/domains*",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/POST/domains",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/PUT/domains/*",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/DELETE/domains/*",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/*/quiz/*",
-                                f"arn:aws:execute-api:{self.region}:{self.account}:*/*/*/progress/*"
-                            ]
-                        )
-                    ]
-                )
-            }
-        )
-    
-    def _create_aurora_cluster(self) -> rds.ServerlessCluster:
-        """Create Aurora Serverless PostgreSQL cluster"""
-        # Create security group for Aurora
-        aurora_sg = ec2.SecurityGroup(
-            self,
-            "AuroraSecurityGroup",
-            vpc=self.vpc,
-            description="Security group for Aurora Serverless cluster",
-            allow_all_outbound=False
-        )
-        
-        # Allow inbound connections from Lambda functions
-        aurora_sg.add_ingress_rule(
-            peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
-            connection=ec2.Port.tcp(5432),
-            description="Allow PostgreSQL connections from VPC"
-        )
-        
-        return rds.ServerlessCluster(
-            self,
-            "AuroraCluster",
-            engine=rds.DatabaseClusterEngine.aurora_postgres(
-                version=rds.AuroraPostgresEngineVersion.VER_13_7
-            ),
-            credentials=rds.Credentials.from_secret(self.db_secret),
-            default_database_name="tutor_system",
+            "DBProxyFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/db_proxy"),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            layers=[self.shared_layer],
+            # Inside VPC to access RDS
             vpc=self.vpc,
             vpc_subnets=ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
             ),
-            security_groups=[aurora_sg],
-            scaling=rds.ServerlessScalingOptions(
-                auto_pause=Duration.minutes(5 if self.environment == "development" else 15),
-                min_capacity=rds.AuroraCapacityUnit.ACU_2,
-                max_capacity=rds.AuroraCapacityUnit.ACU_4 if self.environment == "development" else rds.AuroraCapacityUnit.ACU_8
-            ),
-            deletion_protection=self.environment == "production",
-            removal_policy=RemovalPolicy.DESTROY if self.environment == "development" else RemovalPolicy.RETAIN
+            security_groups=[self.lambda_security_group],
+            environment={
+                "DB_SECRET_ARN": self.db_credentials.secret_arn,
+                "DB_NAME": "tutor_system"
+            },
+            description="Database proxy Lambda - handles all DB operations from VPC"
         )
-    
-    def _create_common_layer(self) -> _lambda.LayerVersion:
-        """Create Lambda layer for common utilities"""
-        return _lambda.LayerVersion(
-            self,
-            "CommonUtilitiesLayer",
-            code=_lambda.Code.from_asset("../src/shared"),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
-            description="Common utilities for tutor system Lambda functions"
-        )
-    
-    def _create_ml_model_layer(self) -> _lambda.LayerVersion:
-        """Create Lambda layer for ML model"""
-        return _lambda.LayerVersion(
-            self,
-            "MLModelLayer",
-            code=_lambda.Code.from_asset("../final_similarity_model"),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
-            description="Sentence transformer model for answer evaluation"
-        )
-    
-    def _create_lambda_functions(self) -> Dict[str, _lambda.Function]:
-        """Create all Lambda functions"""
-        functions = {}
         
-        # Common environment variables
-        common_env = {
-            "ENVIRONMENT": self.environment,
-            "STAGE": self.environment,  # Add STAGE for environment-aware auth
-            "AURORA_ENDPOINT": self.aurora_cluster.cluster_endpoint.hostname,
-            "AURORA_PORT": "5432",
-            "AURORA_DATABASE": "tutor_system",
-            "DB_SECRET_NAME": self.db_secret.secret_name,
-            "USER_POOL_ID": self.user_pool.user_pool_id,
-            "USER_POOL_CLIENT_ID": self.user_pool_client.user_pool_client_id,
-            "AWS_REGION": self.region
-        }
+        # Grant DB proxy access to Secrets Manager
+        self.db_credentials.grant_read(self.db_proxy_lambda)
         
-        # Common Lambda configuration
-        common_config = {
-            "runtime": _lambda.Runtime.PYTHON_3_11,
-            "timeout": Duration.seconds(30),
-            "memory_size": 256,
-            "environment": common_env,
-            "layers": [self.common_layer],
-            "vpc": self.vpc,
-            "vpc_subnets": ec2.SubnetSelection(
-                subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
-            )
-        }
-        
-        # Authentication function
-        functions["auth"] = _lambda.Function(
+        # Step 5: Create Lambda A (Auth) - Outside VPC
+        self.auth_lambda = _lambda.Function(
             self,
             "AuthFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
             code=_lambda.Code.from_asset("../src/lambda_functions/auth"),
-            handler="handler.lambda_handler",
-            **common_config
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            layers=[self.shared_layer],
+            # Outside VPC to access Cognito (public service)
+            environment={
+                "USER_POOL_ID": self.user_pool.user_pool_id,
+                "USER_POOL_CLIENT_ID": self.user_pool_client.user_pool_client_id,
+                "STAGE": "prod",
+                # DB Proxy Lambda function name
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name
+            },
+            description="Auth Lambda - handles Cognito, invokes DB proxy for database operations"
         )
         
-        # Domain management function
-        functions["domain_management"] = _lambda.Function(
+        # Grant Lambda permission to confirm users (for dev auto-confirmation)
+        self.user_pool.grant(
+            self.auth_lambda,
+            "cognito-idp:AdminConfirmSignUp",
+            "cognito-idp:AdminGetUser"
+        )
+        
+        # Grant Auth Lambda permission to invoke DB Proxy Lambda
+        self.db_proxy_lambda.grant_invoke(self.auth_lambda)
+        
+        # Step 5.5: Create User Profile Lambda (Lambda A pattern)
+        self.profile_lambda = _lambda.Function(
             self,
-            "DomainManagementFunction",
-            code=_lambda.Code.from_asset("../src/lambda_functions/domain_management"),
+            "ProfileFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            **common_config
+            code=_lambda.Code.from_asset("../src/lambda_functions/user_profile"),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            layers=[self.shared_layer],
+            # Outside VPC to access Cognito (public service)
+            environment={
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+            }
         )
         
-        # Quiz engine function
-        functions["quiz_engine"] = _lambda.Function(
+        # Grant Profile Lambda permission to invoke DB Proxy Lambda
+        self.db_proxy_lambda.grant_invoke(self.profile_lambda)
+        
+        # Step 5.7: Create Domain Management Lambda (Lambda A pattern)
+        self.domain_lambda = _lambda.Function(
+            self,
+            "DomainFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/domain_management"),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            layers=[self.shared_layer],
+            # Outside VPC to access Cognito (public service)
+            environment={
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+            }
+        )
+        
+        # Grant Domain Lambda permission to invoke DB Proxy Lambda
+        self.db_proxy_lambda.grant_invoke(self.domain_lambda)
+        
+        # Step 5: Create Progress Tracking Lambda (Lambda A - outside VPC)
+        self.progress_lambda = _lambda.Function(
+            self,
+            "ProgressFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/progress_tracking"),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            layers=[self.shared_layer],
+            # Outside VPC to access Cognito (public service)
+            environment={
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+            }
+        )
+        
+        # Grant Progress Lambda permission to invoke DB Proxy Lambda
+        self.db_proxy_lambda.grant_invoke(self.progress_lambda)
+        
+        # Step 5.9: Create ML Inference Lambda (Container-based with ML model)
+        # Pure ML inference - rarely changes
+        inference_repo = ecr.Repository.from_repository_name(
+            self,
+            "InferenceRepo",
+            repository_name="answer-evaluator-inference"
+        )
+        
+        self.inference_lambda = _lambda.DockerImageFunction(
+            self,
+            "InferenceFunction",
+            code=_lambda.DockerImageCode.from_ecr(
+                repository=inference_repo,
+                tag_or_digest="latest"
+            ),
+            timeout=Duration.seconds(120),
+            memory_size=2048,
+            environment={
+                "MODEL_PATH": "/opt/ml/model"
+            },
+            description="ML Inference Lambda - Semantic similarity calculation only"
+        )
+        
+        # Step 5.10: Create Answer Evaluator Lambda (Zip-based business logic)
+        # Fast deployment for threshold/feedback changes
+        self.answer_evaluator_lambda = _lambda.Function(
+            self,
+            "AnswerEvaluatorFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/answer_evaluator"),
+            timeout=Duration.seconds(120),  # Increased to handle inference Lambda cold starts
+            memory_size=256,
+            layers=[self.shared_layer],
+            environment={
+                "INFERENCE_FUNCTION_NAME": self.inference_lambda.function_name,
+                "THRESHOLD_EXCELLENT": "0.85",
+                "THRESHOLD_GOOD": "0.70",
+                "THRESHOLD_PARTIAL": "0.50",
+                "LOG_LEVEL": "INFO",
+                "REGION": self.region
+            },
+            description="Answer Evaluator - Business logic and API routing"
+        )
+        
+        # Grant Answer Evaluator permission to invoke Inference Lambda
+        self.inference_lambda.grant_invoke(self.answer_evaluator_lambda)
+        
+        # Step 5.11: Create Quiz Engine Lambda (Lambda A pattern)
+        self.quiz_engine_lambda = _lambda.Function(
             self,
             "QuizEngineFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
             code=_lambda.Code.from_asset("../src/lambda_functions/quiz_engine"),
-            handler="handler.lambda_handler",
-            **common_config
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            layers=[self.shared_layer],
+            # Outside VPC to access Cognito (public service)
+            environment={
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "ANSWER_EVALUATOR_FUNCTION_NAME": self.answer_evaluator_lambda.function_name,
+                "LOG_LEVEL": "INFO",
+                "REGION": self.region
+            },
+            description="Quiz Engine Lambda - manages quiz sessions and question flow"
         )
         
-        # Answer evaluation function (with ML model layer)
-        answer_eval_config = common_config.copy()
-        answer_eval_config["layers"].append(self.ml_model_layer)
-        answer_eval_config["memory_size"] = 512  # More memory for ML model
-        answer_eval_config["timeout"] = Duration.seconds(60)
-        answer_eval_config["environment"]["MODEL_PATH"] = "/opt/final_similarity_model"
+        # Grant Quiz Engine permission to invoke DB Proxy Lambda
+        self.db_proxy_lambda.grant_invoke(self.quiz_engine_lambda)
         
-        functions["answer_evaluation"] = _lambda.Function(
+        # Grant Quiz Engine permission to invoke Answer Evaluator Lambda
+        self.answer_evaluator_lambda.grant_invoke(self.quiz_engine_lambda)
+        
+        # Lambda Bridge Architecture:
+        # ✅ Lambda A (Auth) - Outside VPC, can reach Cognito
+        # ✅ Lambda A (Profile) - Outside VPC, can reach Cognito
+        # ✅ Lambda A (Domain) - Outside VPC, can reach Cognito
+        # ✅ Lambda A (Progress) - Outside VPC, can reach Cognito
+        # ✅ Lambda A (Quiz Engine) - Outside VPC, can reach Cognito
+        # ✅ Lambda A (Answer Evaluator) - Outside VPC, ML model
+        # ✅ Lambda B (DB Proxy) - Inside VPC, can reach RDS
+        # ✅ Lambda A invokes Lambda B via AWS internal network (no NAT needed)
+        # ✅ Completely free tier eligible
+        
+        # Step 6: Create API Gateway
+        self.api = apigateway.RestApi(
             self,
-            "AnswerEvaluationFunction",
-            code=_lambda.Code.from_asset("../src/lambda_functions/answer_evaluation"),
-            handler="handler.lambda_handler",
-            **answer_eval_config
+            "AuthAPI",
+            rest_api_name="tutor-auth-api-dev",
+            description="Authentication API for Know-It-All Tutor - Dev",
+            # Enable CORS for frontend to call this API
+            default_cors_preflight_options=apigateway.CorsOptions(
+                allow_origins=["http://localhost:3000"],  # ✅ Only allow your frontend
+                allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+                allow_headers=["Content-Type", "Authorization"]
+            )
         )
         
-        # Progress tracking function
-        functions["progress_tracking"] = _lambda.Function(
-            self,
-            "ProgressTrackingFunction",
-            code=_lambda.Code.from_asset("../src/lambda_functions/progress_tracking"),
-            handler="handler.lambda_handler",
-            **common_config
-        )
-        
-        # Batch upload function
-        functions["batch_upload"] = _lambda.Function(
-            self,
-            "BatchUploadFunction",
-            code=_lambda.Code.from_asset("../src/lambda_functions/batch_upload"),
-            handler="handler.lambda_handler",
-            **common_config
-        )
-        
-        # Database migration function
-        functions["db_migration"] = _lambda.Function(
-            self,
-            "DatabaseMigrationFunction",
-            code=_lambda.Code.from_asset("../src/lambda_functions/db_migration"),
-            handler="handler.lambda_handler",
-            **common_config
-        )
-        
-        # Cognito trigger functions (no VPC needed for triggers)
-        trigger_config = {
-            "runtime": _lambda.Runtime.PYTHON_3_11,
-            "timeout": Duration.seconds(30),
-            "memory_size": 256,
-            "environment": common_env,
-            "layers": [self.common_layer]
+        # Add CORS headers to Gateway error responses (401, 403, 500, etc.)
+        # This ensures CORS headers are present even when authorizer rejects requests
+        cors_headers = {
+            'Access-Control-Allow-Origin': "'https://d1o8fugfe04j49.cloudfront.net'",
+            'Access-Control-Allow-Headers': "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+            'Access-Control-Allow-Methods': "'GET,POST,PUT,DELETE,OPTIONS'",
+            'Access-Control-Allow-Credentials': "'true'"
         }
         
-        functions["cognito_pre_signup"] = _lambda.Function(
+        # Add CORS to common error responses
+        for response_type in [
+            apigateway.ResponseType.UNAUTHORIZED,
+            apigateway.ResponseType.ACCESS_DENIED,
+            apigateway.ResponseType.DEFAULT_4_XX,
+            apigateway.ResponseType.DEFAULT_5_XX
+        ]:
+            self.api.add_gateway_response(
+                f"CorsGatewayResponse{response_type.response_type}",
+                type=response_type,
+                response_headers=cors_headers
+            )
+        
+        # Create Cognito Authorizer for protected routes
+        self.cognito_authorizer = apigateway.CognitoUserPoolsAuthorizer(
             self,
-            "CognitoPreSignupTrigger",
-            code=_lambda.Code.from_asset("../src/lambda_functions/cognito_triggers"),
-            handler="pre_signup.lambda_handler",
-            **trigger_config
+            "CognitoAuthorizer",
+            cognito_user_pools=[self.user_pool]
         )
+
+        # Step 7: Create API routes and connect to Lambda
+        # Create /auth resource (public routes)
+        auth_resource = self.api.root.add_resource("auth")
         
-        functions["cognito_post_confirmation"] = _lambda.Function(
-            self,
-            "CognitoPostConfirmationTrigger",
-            code=_lambda.Code.from_asset("../src/lambda_functions/cognito_triggers"),
-            handler="post_confirmation.lambda_handler",
-            **trigger_config
-        )
+        # Create Lambda integration
+        auth_integration = apigateway.LambdaIntegration(self.auth_lambda)
         
-        functions["cognito_pre_authentication"] = _lambda.Function(
-            self,
-            "CognitoPreAuthenticationTrigger",
-            code=_lambda.Code.from_asset("../src/lambda_functions/cognito_triggers"),
-            handler="pre_authentication.lambda_handler",
-            **trigger_config
-        )
-        
-        functions["cognito_post_authentication"] = _lambda.Function(
-            self,
-            "CognitoPostAuthenticationTrigger",
-            code=_lambda.Code.from_asset("../src/lambda_functions/cognito_triggers"),
-            handler="post_authentication.lambda_handler",
-            **trigger_config
-        )
-        
-        # Grant permissions to all functions
-        for function in functions.values():
-            # Grant access to secrets
-            self.db_secret.grant_read(function)
-            
-            # Grant VPC access
-            function.add_to_role_policy(
-                iam.PolicyStatement(
-                    actions=[
-                        "ec2:CreateNetworkInterface",
-                        "ec2:DescribeNetworkInterfaces",
-                        "ec2:DeleteNetworkInterface"
-                    ],
-                    resources=["*"]
-                )
-            )
-        
-        # Grant Cognito permission to invoke trigger functions
-        for trigger_name in ["cognito_pre_signup", "cognito_post_confirmation", 
-                           "cognito_pre_authentication", "cognito_post_authentication"]:
-            if trigger_name in functions:
-                functions[trigger_name].add_permission(
-                    f"CognitoInvoke{trigger_name}",
-                    principal=iam.ServicePrincipal("cognito-idp.amazonaws.com"),
-                    action="lambda:InvokeFunction"
-                )
-        
-        return functions
-    
-    def _create_api_gateway(self) -> apigateway.RestApi:
-        """Create API Gateway with Lambda integrations"""
-        api = apigateway.RestApi(
-            self,
-            "TutorSystemAPI",
-            rest_api_name=f"tutor-system-api-{self.environment}",
-            description=f"API for Know-It-All Tutor System - {self.environment}",
-            # Enhanced CORS configuration for frontend integration
-            default_cors_preflight_options=apigateway.CorsOptions(
-                allow_origins=["https://app.know-it-all-tutor.com", "http://localhost:3000"] if self.environment == "production" 
-                           else apigateway.Cors.ALL_ORIGINS,
-                allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-                allow_headers=[
-                    "Content-Type", 
-                    "Authorization", 
-                    "X-Amz-Date", 
-                    "X-Api-Key", 
-                    "X-Amz-Security-Token",
-                    "X-Requested-With",
-                    "Accept",
-                    "Origin"
-                ],
-                allow_credentials=True,
-                max_age=Duration.hours(1)
-            ),
-            # Request/response transformation settings
-            default_method_options=apigateway.MethodOptions(
-                throttling=apigateway.ThrottleSettings(
-                    rate_limit=1000 if self.environment == "production" else 100,
-                    burst_limit=2000 if self.environment == "production" else 200
-                ),
-                # API key required for admin endpoints
-                api_key_required=False  # Will be set per method for admin endpoints
-            ),
-            # Binary media types for file uploads
-            binary_media_types=["application/json", "multipart/form-data"],
-            # Minimum compression size
-            minimum_compression_size=1024,
-            # API Gateway policy for additional security
-            policy=iam.PolicyDocument(
-                statements=[
-                    iam.PolicyStatement(
-                        effect=iam.Effect.ALLOW,
-                        principals=[iam.AnyPrincipal()],
-                        actions=["execute-api:Invoke"],
-                        resources=["*"],
-                        conditions={
-                            "IpAddress": {
-                                "aws:SourceIp": ["0.0.0.0/0"]  # Allow all IPs in development
-                            }
-                        } if self.environment == "development" else {}
-                    )
-                ]
-            ) if self.environment == "development" else None
-        )
-        
-        # Create Cognito User Pool Authorizer (conditionally for production)
-        # Only create if we're in production environment
-        if self.environment in ["prod", "production"]:
-            self.cognito_authorizer = apigateway.CognitoUserPoolsAuthorizer(
-                self,
-                "CognitoUserPoolAuthorizer",
-                cognito_user_pools=[self.user_pool],
-                authorizer_name="CognitoUserPoolAuthorizer",
-                identity_source="method.request.header.Authorization",
-                results_cache_ttl=Duration.minutes(5)
-            )
-        else:
-            # For development/local, create a placeholder that won't be used
-            self.cognito_authorizer = None
-        
-        # Create API resources and methods
-        self._create_api_routes(api)
-        
-        # Add request/response models for validation
-        self._create_api_models(api)
-        
-        # Create API keys and usage plans for admin access
-        self._create_api_keys_and_usage_plans(api)
-        
-        return api
-    
-    def _create_api_keys_and_usage_plans(self, api: apigateway.RestApi):
-        """Create API keys and usage plans for rate limiting and admin access"""
-        
-        # Create API key for admin operations
-        admin_api_key = api.add_api_key(
-            "AdminAPIKey",
-            api_key_name=f"tutor-system-admin-key-{self.environment}",
-            description="API key for administrative operations"
-        )
-        
-        # Create usage plan for admin operations
-        admin_usage_plan = api.add_usage_plan(
-            "AdminUsagePlan",
-            name=f"tutor-system-admin-plan-{self.environment}",
-            description="Usage plan for administrative operations",
-            throttle=apigateway.ThrottleSettings(
-                rate_limit=500,  # Higher rate limit for admin operations
-                burst_limit=1000
-            ),
-            quota=apigateway.QuotaSettings(
-                limit=10000,  # 10,000 requests per day for admin
-                period=apigateway.Period.DAY
-            ),
-            api_stages=[
-                apigateway.UsagePlanPerApiStage(
-                    api=api,
-                    stage=api.deployment_stage
-                )
-            ]
-        )
-        
-        # Associate API key with usage plan
-        admin_usage_plan.add_api_key(admin_api_key)
-        
-        # Create usage plan for regular users
-        user_usage_plan = api.add_usage_plan(
-            "UserUsagePlan",
-            name=f"tutor-system-user-plan-{self.environment}",
-            description="Usage plan for regular user operations",
-            throttle=apigateway.ThrottleSettings(
-                rate_limit=100,  # Standard rate limit for users
-                burst_limit=200
-            ),
-            quota=apigateway.QuotaSettings(
-                limit=1000,  # 1,000 requests per day for regular users
-                period=apigateway.Period.DAY
-            ),
-            api_stages=[
-                apigateway.UsagePlanPerApiStage(
-                    api=api,
-                    stage=api.deployment_stage
-                )
-            ]
-        )
-    
-    def _create_api_models(self, api: apigateway.RestApi):
-        """Create API Gateway models for request/response validation"""
-        
-        # User registration model
-        user_registration_model = api.add_model(
-            "UserRegistrationModel",
-            content_type="application/json",
-            model_name="UserRegistration",
-            schema=apigateway.JsonSchema(
-                schema=apigateway.JsonSchemaVersion.DRAFT4,
-                title="User Registration",
-                type=apigateway.JsonSchemaType.OBJECT,
-                properties={
-                    "email": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        format="email"
-                    ),
-                    "password": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        min_length=8
-                    ),
-                    "first_name": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        max_length=50
-                    ),
-                    "last_name": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        max_length=50
-                    )
-                },
-                required=["email", "password"]
-            )
-        )
-        
-        # User login model
-        user_login_model = api.add_model(
-            "UserLoginModel",
-            content_type="application/json",
-            model_name="UserLogin",
-            schema=apigateway.JsonSchema(
-                schema=apigateway.JsonSchemaVersion.DRAFT4,
-                title="User Login",
-                type=apigateway.JsonSchemaType.OBJECT,
-                properties={
-                    "email": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        format="email"
-                    ),
-                    "password": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING
-                    )
-                },
-                required=["email", "password"]
-            )
-        )
-        
-        # Domain creation model
-        domain_creation_model = api.add_model(
-            "DomainCreationModel",
-            content_type="application/json",
-            model_name="DomainCreation",
-            schema=apigateway.JsonSchema(
-                schema=apigateway.JsonSchemaVersion.DRAFT4,
-                title="Domain Creation",
-                type=apigateway.JsonSchemaType.OBJECT,
-                properties={
-                    "name": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        min_length=1,
-                        max_length=100
-                    ),
-                    "description": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        max_length=500
-                    ),
-                    "terms": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.ARRAY,
-                        items=apigateway.JsonSchema(
-                            type=apigateway.JsonSchemaType.OBJECT,
-                            properties={
-                                "term": apigateway.JsonSchema(
-                                    type=apigateway.JsonSchemaType.STRING,
-                                    min_length=1,
-                                    max_length=200
-                                ),
-                                "definition": apigateway.JsonSchema(
-                                    type=apigateway.JsonSchemaType.STRING,
-                                    min_length=1,
-                                    max_length=1000
-                                )
-                            },
-                            required=["term", "definition"]
-                        )
-                    )
-                },
-                required=["name", "terms"]
-            )
-        )
-        
-        # Quiz answer model
-        quiz_answer_model = api.add_model(
-            "QuizAnswerModel",
-            content_type="application/json",
-            model_name="QuizAnswer",
-            schema=apigateway.JsonSchema(
-                schema=apigateway.JsonSchemaVersion.DRAFT4,
-                title="Quiz Answer",
-                type=apigateway.JsonSchemaType.OBJECT,
-                properties={
-                    "session_id": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING
-                    ),
-                    "answer": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        min_length=1,
-                        max_length=1000
-                    )
-                },
-                required=["session_id", "answer"]
-            )
-        )
-        
-        # Batch upload model
-        batch_upload_model = api.add_model(
-            "BatchUploadModel",
-            content_type="application/json",
-            model_name="BatchUpload",
-            schema=apigateway.JsonSchema(
-                schema=apigateway.JsonSchemaVersion.DRAFT4,
-                title="Batch Upload",
-                type=apigateway.JsonSchemaType.OBJECT,
-                properties={
-                    "domains": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.ARRAY,
-                        items=apigateway.JsonSchema(
-                            type=apigateway.JsonSchemaType.OBJECT,
-                            properties={
-                                "name": apigateway.JsonSchema(
-                                    type=apigateway.JsonSchemaType.STRING,
-                                    min_length=1,
-                                    max_length=100
-                                ),
-                                "description": apigateway.JsonSchema(
-                                    type=apigateway.JsonSchemaType.STRING,
-                                    max_length=500
-                                ),
-                                "terms": apigateway.JsonSchema(
-                                    type=apigateway.JsonSchemaType.ARRAY,
-                                    items=apigateway.JsonSchema(
-                                        type=apigateway.JsonSchemaType.OBJECT,
-                                        properties={
-                                            "term": apigateway.JsonSchema(
-                                                type=apigateway.JsonSchemaType.STRING,
-                                                min_length=1,
-                                                max_length=200
-                                            ),
-                                            "definition": apigateway.JsonSchema(
-                                                type=apigateway.JsonSchemaType.STRING,
-                                                min_length=1,
-                                                max_length=1000
-                                            )
-                                        },
-                                        required=["term", "definition"]
-                                    )
-                                )
-                            },
-                            required=["name", "terms"]
-                        )
-                    )
-                },
-                required=["domains"]
-            )
-        )
-        
-        # Error response model
-        error_response_model = api.add_model(
-            "ErrorResponseModel",
-            content_type="application/json",
-            model_name="ErrorResponse",
-            schema=apigateway.JsonSchema(
-                schema=apigateway.JsonSchemaVersion.DRAFT4,
-                title="Error Response",
-                type=apigateway.JsonSchemaType.OBJECT,
-                properties={
-                    "error": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING
-                    ),
-                    "message": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING
-                    ),
-                    "timestamp": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING
-                    )
-                },
-                required=["error", "message"]
-            )
-        )
-    
-    def _create_protected_method(self, resource: apigateway.Resource, http_method: str, 
-                               lambda_function: _lambda.Function, integration_options: dict, 
-                               method_options: dict) -> apigateway.Method:
-        """Create a method with conditional authorization based on environment"""
-        
-        # For production environments, use Cognito authorizer
-        if self.environment in ["prod", "production"] and self.cognito_authorizer:
-            method_options_with_auth = method_options.copy()
-            method_options_with_auth["authorizer"] = self.cognito_authorizer
-            
-            return resource.add_method(
-                http_method,
-                apigateway.LambdaIntegration(lambda_function, **integration_options),
-                **method_options_with_auth
-            )
-        else:
-            # For development/local, no authorization required
-            return resource.add_method(
-                http_method,
-                apigateway.LambdaIntegration(lambda_function, **integration_options),
-                **method_options
-            )
-    
-    def _create_api_routes(self, api: apigateway.RestApi):
-        """Create API Gateway routes and integrations"""
-        
-        # Common integration options for better error handling and security
-        integration_options = apigateway.IntegrationOptions(
-            timeout=Duration.seconds(29),  # API Gateway max timeout
-            passthrough_behavior=apigateway.PassthroughBehavior.WHEN_NO_MATCH,
-            # Request size validation
-            request_parameters={
-                "integration.request.header.X-Request-Size": "context.requestLength"
-            },
-            integration_responses=[
-                apigateway.IntegrationResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": "'*'",
-                        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization'",
-                        "method.response.header.Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE,OPTIONS'",
-                        "method.response.header.Strict-Transport-Security": "'max-age=31536000; includeSubDomains; preload'",
-                        "method.response.header.X-Content-Type-Options": "'nosniff'",
-                        "method.response.header.X-Frame-Options": "'DENY'",
-                        "method.response.header.X-XSS-Protection": "'1; mode=block'",
-                        "method.response.header.Referrer-Policy": "'strict-origin-when-cross-origin'"
-                    }
-                ),
-                apigateway.IntegrationResponse(
-                    status_code="400",
-                    selection_pattern="4\\d{2}",
-                    response_templates={
-                        "application/json": '{"error": "Bad Request", "message": $input.json(\'$.errorMessage\'), "timestamp": "$context.requestTime"}'
-                    },
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": "'*'",
-                        "method.response.header.Strict-Transport-Security": "'max-age=31536000; includeSubDomains; preload'",
-                        "method.response.header.X-Content-Type-Options": "'nosniff'"
-                    }
-                ),
-                apigateway.IntegrationResponse(
-                    status_code="413",
-                    selection_pattern="Request Entity Too Large",
-                    response_templates={
-                        "application/json": '{"error": "Request Entity Too Large", "message": "Request body exceeds maximum size limit", "timestamp": "$context.requestTime"}'
-                    }
-                ),
-                apigateway.IntegrationResponse(
-                    status_code="429",
-                    selection_pattern="Too Many Requests",
-                    response_templates={
-                        "application/json": '{"error": "Too Many Requests", "message": "Rate limit exceeded", "timestamp": "$context.requestTime"}'
-                    }
-                ),
-                apigateway.IntegrationResponse(
-                    status_code="500",
-                    selection_pattern="5\\d{2}",
-                    response_templates={
-                        "application/json": '{"error": "Internal Server Error", "message": "An unexpected error occurred", "timestamp": "$context.requestTime"}'
-                    }
-                )
-            ]
-        )
-        
-        # Common method options for consistent responses and security
-        method_options = apigateway.MethodOptions(
-            method_responses=[
-                apigateway.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True,
-                        "method.response.header.Access-Control-Allow-Headers": True,
-                        "method.response.header.Access-Control-Allow-Methods": True,
-                        "method.response.header.Strict-Transport-Security": True,
-                        "method.response.header.X-Content-Type-Options": True,
-                        "method.response.header.X-Frame-Options": True,
-                        "method.response.header.X-XSS-Protection": True,
-                        "method.response.header.Referrer-Policy": True
-                    }
-                ),
-                apigateway.MethodResponse(status_code="400"),
-                apigateway.MethodResponse(status_code="401"),
-                apigateway.MethodResponse(status_code="403"),
-                apigateway.MethodResponse(status_code="404"),
-                apigateway.MethodResponse(status_code="413"),  # Request Entity Too Large
-                apigateway.MethodResponse(status_code="429"),  # Too Many Requests
-                apigateway.MethodResponse(status_code="500")
-            ],
-            # Request validation
-            request_validator=api.add_request_validator(
-                "RequestValidator",
-                validate_request_body=True,
-                validate_request_parameters=True
-            )
-        )
-        
-        # Auth routes (public - no authorization needed)
-        auth_resource = api.root.add_resource("auth")
-        
-        # User registration
+        # Add routes: POST /auth/register
         register_resource = auth_resource.add_resource("register")
-        register_resource.add_method(
-            "POST",
-            apigateway.LambdaIntegration(
-                self.lambda_functions["auth"],
-                **integration_options.__dict__
-            ),
-            **method_options.__dict__
-        )
+        register_resource.add_method("POST", auth_integration)
         
-        # User login
+        # Add routes: POST /auth/login
         login_resource = auth_resource.add_resource("login")
-        login_resource.add_method(
-            "POST",
-            apigateway.LambdaIntegration(
-                self.lambda_functions["auth"],
-                **integration_options.__dict__
-            ),
-            **method_options.__dict__
-        )
+        login_resource.add_method("POST", auth_integration)
         
-        # User logout (protected)
-        logout_resource = auth_resource.add_resource("logout")
-        self._create_protected_method(
-            logout_resource, 
-            "POST", 
-            self.lambda_functions["auth"], 
-            integration_options.__dict__, 
-            method_options.__dict__
-        )
-        
-        # Token validation (protected)
+        # Add routes: GET /auth/validate
         validate_resource = auth_resource.add_resource("validate")
-        self._create_protected_method(
-            validate_resource, 
+        validate_resource.add_method("GET", auth_integration)
+        
+        # Define CORS configuration for all protected resources
+        cors_options = apigateway.CorsOptions(
+            allow_origins=["https://d1o8fugfe04j49.cloudfront.net"],
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=[
+                "Content-Type",
+                "Authorization",
+                "X-Amz-Date",
+                "X-Api-Key",
+                "X-Amz-Security-Token"
+            ],
+            allow_credentials=True
+        )
+        
+        # Create /profile resource (protected routes)
+        profile_resource = self.api.root.add_resource(
+            "profile",
+            default_cors_preflight_options=cors_options
+        )
+        profile_integration = apigateway.LambdaIntegration(self.profile_lambda)
+        
+        # Add routes: GET /profile (requires authentication)
+        profile_resource.add_method(
             "GET", 
-            self.lambda_functions["auth"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+            profile_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Additional auth endpoints for Cognito
-        confirm_resource = auth_resource.add_resource("confirm")
-        confirm_resource.add_method(
-            "POST",
-            apigateway.LambdaIntegration(
-                self.lambda_functions["auth"],
-                **integration_options.__dict__
-            ),
-            **method_options.__dict__
-        )
-        
-        resend_resource = auth_resource.add_resource("resend-confirmation")
-        resend_resource.add_method(
-            "POST",
-            apigateway.LambdaIntegration(
-                self.lambda_functions["auth"],
-                **integration_options.__dict__
-            ),
-            **method_options.__dict__
-        )
-        
-        forgot_password_resource = auth_resource.add_resource("forgot-password")
-        forgot_password_resource.add_method(
-            "POST",
-            apigateway.LambdaIntegration(
-                self.lambda_functions["auth"],
-                **integration_options.__dict__
-            ),
-            **method_options.__dict__
-        )
-        
-        confirm_forgot_resource = auth_resource.add_resource("confirm-forgot-password")
-        confirm_forgot_resource.add_method(
-            "POST",
-            apigateway.LambdaIntegration(
-                self.lambda_functions["auth"],
-                **integration_options.__dict__
-            ),
-            **method_options.__dict__
-        )
-        
-        change_password_resource = auth_resource.add_resource("change-password")
-        self._create_protected_method(
-            change_password_resource, 
-            "POST", 
-            self.lambda_functions["auth"], 
-            integration_options.__dict__, 
-            method_options.__dict__
-        )
-        
-        # Domain routes (protected - require authorization)
-        domains_resource = api.root.add_resource("domains")
-        
-        # List domains
-        self._create_protected_method(
-            domains_resource, 
-            "GET", 
-            self.lambda_functions["domain_management"], 
-            integration_options.__dict__, 
-            method_options.__dict__
-        )
-        
-        # Create domain
-        self._create_protected_method(
-            domains_resource, 
-            "POST", 
-            self.lambda_functions["domain_management"], 
-            integration_options.__dict__, 
-            method_options.__dict__
-        )
-        
-        # Domain-specific operations
-        domain_resource = domains_resource.add_resource("{domainId}")
-        
-        # Get domain
-        self._create_protected_method(
-            domain_resource, 
-            "GET", 
-            self.lambda_functions["domain_management"], 
-            integration_options.__dict__, 
-            method_options.__dict__
-        )
-        
-        # Update domain
-        self._create_protected_method(
-            domain_resource, 
+        # Add routes: PUT /profile (requires authentication)
+        profile_resource.add_method(
             "PUT", 
-            self.lambda_functions["domain_management"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+            profile_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Delete domain
-        self._create_protected_method(
-            domain_resource, 
-            "DELETE", 
-            self.lambda_functions["domain_management"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        # Create /domains resource (protected routes)
+        domains_resource = self.api.root.add_resource(
+            "domains",
+            default_cors_preflight_options=cors_options
+        )
+        domain_integration = apigateway.LambdaIntegration(self.domain_lambda)
+        
+        # POST /domains (create domain)
+        domains_resource.add_method(
+            "POST",
+            domain_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Domain terms operations
-        terms_resource = domain_resource.add_resource("terms")
-        self._create_protected_method(
-            terms_resource, 
-            "GET", 
-            self.lambda_functions["domain_management"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        # GET /domains (list domains)
+        domains_resource.add_method(
+            "GET",
+            domain_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        self._create_protected_method(
-            terms_resource, 
-            "POST", 
-            self.lambda_functions["domain_management"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        # /domains/{id}
+        domain_id_resource = domains_resource.add_resource(
+            "{id}",
+            default_cors_preflight_options=cors_options
         )
         
-        # Quiz routes (protected - require authorization)
-        quiz_resource = api.root.add_resource("quiz")
-        
-        # Start quiz session
-        start_quiz_resource = quiz_resource.add_resource("start")
-        self._create_protected_method(
-            start_quiz_resource, 
-            "POST", 
-            self.lambda_functions["quiz_engine"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        domain_id_resource.add_method(
+            "GET",
+            domain_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Submit answer
-        answer_resource = quiz_resource.add_resource("answer")
-        self._create_protected_method(
-            answer_resource, 
-            "POST", 
-            self.lambda_functions["quiz_engine"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        domain_id_resource.add_method(
+            "PUT",
+            domain_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Get current question
-        question_resource = quiz_resource.add_resource("question")
-        self._create_protected_method(
-            question_resource, 
-            "GET", 
-            self.lambda_functions["quiz_engine"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        domain_id_resource.add_method(
+            "DELETE",
+            domain_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Quiz session operations
-        session_resource = quiz_resource.add_resource("session").add_resource("{sessionId}")
-        
-        # Get session status
-        self._create_protected_method(
-            session_resource, 
-            "GET", 
-            self.lambda_functions["quiz_engine"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        # /domains/{id}/terms
+        terms_resource = domain_id_resource.add_resource(
+            "terms",
+            default_cors_preflight_options=cors_options
         )
         
-        # Pause/resume session
-        self._create_protected_method(
-            session_resource, 
-            "PUT", 
-            self.lambda_functions["quiz_engine"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        terms_resource.add_method(
+            "POST",
+            domain_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Complete session
-        self._create_protected_method(
-            session_resource, 
-            "DELETE", 
-            self.lambda_functions["quiz_engine"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        terms_resource.add_method(
+            "GET",
+            domain_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Answer evaluation routes (internal - used by quiz engine)
-        evaluation_resource = api.root.add_resource("evaluation")
-        self._create_protected_method(
-            evaluation_resource, 
-            "POST", 
-            self.lambda_functions["answer_evaluation"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        # Step 8: Progress Tracking Routes
+        progress_integration = apigateway.LambdaIntegration(self.progress_lambda)
+        
+        # /progress
+        progress_resource = self.api.root.add_resource(
+            "progress",
+            default_cors_preflight_options=cors_options
         )
         
-        # Progress routes (protected - require authorization)
-        progress_resource = api.root.add_resource("progress")
-        
-        # Get progress dashboard
-        dashboard_resource = progress_resource.add_resource("dashboard")
-        self._create_protected_method(
-            dashboard_resource, 
-            "GET", 
-            self.lambda_functions["progress_tracking"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        # /progress/dashboard
+        dashboard_resource = progress_resource.add_resource(
+            "dashboard",
+            default_cors_preflight_options=cors_options
         )
         
-        # Record progress
-        record_resource = progress_resource.add_resource("record")
-        self._create_protected_method(
-            record_resource, 
-            "POST", 
-            self.lambda_functions["progress_tracking"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        dashboard_resource.add_method(
+            "GET",
+            progress_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Get domain-specific progress
-        domain_progress_resource = progress_resource.add_resource("domain").add_resource("{domainId}")
-        self._create_protected_method(
-            domain_progress_resource, 
-            "GET", 
-            self.lambda_functions["progress_tracking"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        # Step 8.5: Quiz Engine and Answer Evaluation Routes
+        quiz_integration = apigateway.LambdaIntegration(self.quiz_engine_lambda)
+        answer_evaluator_integration = apigateway.LambdaIntegration(self.answer_evaluator_lambda)
+        
+        # /quiz
+        quiz_resource = self.api.root.add_resource(
+            "quiz",
+            default_cors_preflight_options=cors_options
         )
         
-        # Batch upload routes (protected - require authorization and API key for admin functions)
-        batch_resource = api.root.add_resource("batch")
-        
-        # Validate batch upload (instructor/admin access)
-        validate_resource = batch_resource.add_resource("validate")
-        if self.environment in ["prod", "production"] and self.cognito_authorizer:
-            validate_resource.add_method(
-                "POST",
-                apigateway.LambdaIntegration(
-                    self.lambda_functions["batch_upload"],
-                    **integration_options.__dict__
-                ),
-                authorizer=self.cognito_authorizer,
-                method_options=apigateway.MethodOptions(
-                    **method_options.__dict__,
-                    api_key_required=True  # Require API key for batch operations
-                )
-            )
-        else:
-            validate_resource.add_method(
-                "POST",
-                apigateway.LambdaIntegration(
-                    self.lambda_functions["batch_upload"],
-                    **integration_options.__dict__
-                ),
-                method_options=apigateway.MethodOptions(
-                    **method_options.__dict__,
-                    api_key_required=True  # Require API key for batch operations
-                )
-            )
-        
-        # Execute batch upload (instructor/admin access)
-        upload_resource = batch_resource.add_resource("upload")
-        if self.environment in ["prod", "production"] and self.cognito_authorizer:
-            upload_resource.add_method(
-                "POST",
-                apigateway.LambdaIntegration(
-                    self.lambda_functions["batch_upload"],
-                    **integration_options.__dict__
-                ),
-                authorizer=self.cognito_authorizer,
-                method_options=apigateway.MethodOptions(
-                    **method_options.__dict__,
-                    api_key_required=True  # Require API key for batch operations
-                )
-            )
-        else:
-            upload_resource.add_method(
-                "POST",
-                apigateway.LambdaIntegration(
-                    self.lambda_functions["batch_upload"],
-                    **integration_options.__dict__
-                ),
-                method_options=apigateway.MethodOptions(
-                    **method_options.__dict__,
-                    api_key_required=True  # Require API key for batch operations
-                )
-            )
-        
-        # Get upload history (instructor/admin access)
-        history_resource = batch_resource.add_resource("history")
-        self._create_protected_method(
-            history_resource, 
-            "GET", 
-            self.lambda_functions["batch_upload"], 
-            integration_options.__dict__, 
-            method_options.__dict__
+        # POST /quiz/start - Start a new quiz session
+        start_resource = quiz_resource.add_resource(
+            "start",
+            default_cors_preflight_options=cors_options
+        )
+        start_resource.add_method(
+            "POST",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
-        # Health check endpoint (public)
-        health_resource = api.root.add_resource("health")
+        # GET /quiz/question - Get next question in current session
+        question_resource = quiz_resource.add_resource(
+            "question",
+            default_cors_preflight_options=cors_options
+        )
+        question_resource.add_method(
+            "GET",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # POST /quiz/answer - Submit answer for current question
+        answer_resource = quiz_resource.add_resource(
+            "answer",
+            default_cors_preflight_options=cors_options
+        )
+        answer_resource.add_method(
+            "POST",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # POST /quiz/pause - Pause current quiz session
+        pause_resource = quiz_resource.add_resource(
+            "pause",
+            default_cors_preflight_options=cors_options
+        )
+        pause_resource.add_method(
+            "POST",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # POST /quiz/resume - Resume paused quiz session
+        resume_resource = quiz_resource.add_resource(
+            "resume",
+            default_cors_preflight_options=cors_options
+        )
+        resume_resource.add_method(
+            "POST",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # /quiz/session
+        session_resource = quiz_resource.add_resource(
+            "session",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # /quiz/session/{sessionId}
+        session_id_resource = session_resource.add_resource(
+            "{sessionId}",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # GET /quiz/session/{sessionId} - Get session details
+        session_id_resource.add_method(
+            "GET",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # DELETE /quiz/session/{sessionId} - Delete session
+        session_id_resource.add_method(
+            "DELETE",
+            quiz_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # /quiz/evaluate - Answer evaluation endpoints
+        evaluate_resource = quiz_resource.add_resource(
+            "evaluate",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # POST /quiz/evaluate - Evaluate single answer
+        evaluate_resource.add_method(
+            "POST",
+            answer_evaluator_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # /quiz/evaluate/batch
+        batch_resource = evaluate_resource.add_resource(
+            "batch",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # POST /quiz/evaluate/batch - Evaluate multiple answers
+        batch_resource.add_method(
+            "POST",
+            answer_evaluator_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # /quiz/evaluate/health
+        health_resource = evaluate_resource.add_resource(
+            "health",
+            default_cors_preflight_options=cors_options
+        )
+        
+        # GET /quiz/evaluate/health - Health check (no auth required)
         health_resource.add_method(
             "GET",
-            apigateway.MockIntegration(
-                integration_responses=[
-                    apigateway.IntegrationResponse(
-                        status_code="200",
-                        response_templates={
-                            "application/json": '{"status": "healthy", "timestamp": "$context.requestTime"}'
-                        }
-                    )
-                ],
-                passthrough_behavior=apigateway.PassthroughBehavior.NEVER,
-                request_templates={
-                    "application/json": '{"statusCode": 200}'
-                }
+            answer_evaluator_integration
+        )
+        
+        # Step 9: Frontend Hosting (S3 + CloudFront)
+        # Create S3 bucket for static website hosting
+        self.frontend_bucket = s3.Bucket(
+            self,
+            "FrontendBucket",
+            website_index_document="index.html",
+            website_error_document="index.html",  # SPA routing
+            public_read_access=True,
+            block_public_access=s3.BlockPublicAccess(
+                block_public_acls=False,
+                block_public_policy=False,
+                ignore_public_acls=False,
+                restrict_public_buckets=False
             ),
-            method_responses=[
-                apigateway.MethodResponse(status_code="200")
-            ]
+            removal_policy=RemovalPolicy.DESTROY,  # For dev environment
+            auto_delete_objects=True  # Clean up on stack deletion
         )
-    
-    def _create_artifacts_bucket(self) -> s3.Bucket:
-        """Create S3 bucket for deployment artifacts"""
-        return s3.Bucket(
+        
+        # Create CloudFront distribution
+        self.distribution = cloudfront.Distribution(
             self,
-            "ArtifactsBucket",
-            bucket_name=f"tutor-system-artifacts-{self.environment}-{self.account}",
-            versioned=True,
-            removal_policy=RemovalPolicy.DESTROY if self.environment == "development" else RemovalPolicy.RETAIN,
-            lifecycle_rules=[
-                s3.LifecycleRule(
-                    id="DeleteOldVersions",
-                    enabled=True,
-                    noncurrent_version_expiration=Duration.days(30)
+            "FrontendDistribution",
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.S3StaticWebsiteOrigin(self.frontend_bucket),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+                cached_methods=cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+                cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                compress=True
+            ),
+            default_root_object="index.html",
+            error_responses=[
+                cloudfront.ErrorResponse(
+                    http_status=404,
+                    response_http_status=200,
+                    response_page_path="/index.html",
+                    ttl=Duration.minutes(5)
+                ),
+                cloudfront.ErrorResponse(
+                    http_status=403,
+                    response_http_status=200,
+                    response_page_path="/index.html",
+                    ttl=Duration.minutes(5)
                 )
-            ]
-        )
-    
-    def _create_outputs(self):
-        """Create CloudFormation outputs"""
-        cdk.CfnOutput(
-            self,
-            "APIGatewayURL",
-            value=self.api_gateway.url,
-            description="API Gateway URL"
+            ],
+            price_class=cloudfront.PriceClass.PRICE_CLASS_100,  # Use only North America and Europe
+            comment="Know-It-All Tutor Frontend - Dev"
         )
         
-        cdk.CfnOutput(
+        # Deploy frontend build to S3
+        self.frontend_deployment = s3deploy.BucketDeployment(
             self,
-            "AuroraEndpoint",
-            value=self.aurora_cluster.cluster_endpoint.hostname,
-            description="Aurora Serverless cluster endpoint"
+            "DeployFrontend",
+            sources=[s3deploy.Source.asset("../frontend/dist")],
+            destination_bucket=self.frontend_bucket,
+            distribution=self.distribution,
+            distribution_paths=["/*"],  # Invalidate CloudFront cache on deployment
         )
-        
-        cdk.CfnOutput(
-            self,
-            "DatabaseSecretArn",
-            value=self.db_secret.secret_arn,
-            description="Database credentials secret ARN"
-        )
-        
 
-        
+        # Step 10: Output important values
         cdk.CfnOutput(
             self,
             "UserPoolId",
@@ -1516,286 +821,91 @@ class TutorSystemStack(Stack):
         
         cdk.CfnOutput(
             self,
-            "UserPoolArn",
-            value=self.user_pool.user_pool_arn,
-            description="Cognito User Pool ARN"
+            "ApiUrl",
+            value=self.api.url,
+            description="API Gateway URL"
         )
         
-        # Only output authorizer ARN if it exists (production environment)
-        if self.cognito_authorizer:
-            cdk.CfnOutput(
-                self,
-                "CognitoAuthorizerArn",
-                value=self.cognito_authorizer.authorizer_arn,
-                description="Cognito User Pool Authorizer ARN"
-            )
-    
-    def _setup_api_security_monitoring(self):
-        """Set up comprehensive API security monitoring and alerting"""
-        
-        # Import additional CDK modules needed for monitoring
-        from aws_cdk import (
-            aws_logs as logs,
-            aws_cloudwatch as cloudwatch,
-            aws_sns as sns,
-            aws_cloudwatch_actions as cloudwatch_actions,
-            aws_logs_destinations as logs_destinations
-        )
-        
-        # Create CloudWatch Log Group for API Gateway access logs
-        api_log_group = logs.LogGroup(
+        cdk.CfnOutput(
             self,
-            "APIGatewayAccessLogs",
-            log_group_name=f"/aws/apigateway/tutor-system-{self.environment}",
-            retention=logs.RetentionDays.ONE_MONTH if self.environment == "development" else logs.RetentionDays.THREE_MONTHS,
-            removal_policy=RemovalPolicy.DESTROY if self.environment == "development" else RemovalPolicy.RETAIN
+            "VpcId",
+            value=self.vpc.vpc_id,
+            description="VPC ID"
         )
         
-        # Enable API Gateway access logging
-        self.api_gateway.deployment_stage.add_property_override(
-            "AccessLogSetting",
-            {
-                "DestinationArn": api_log_group.log_group_arn,
-                "Format": json.dumps({
-                    "requestId": "$context.requestId",
-                    "requestTime": "$context.requestTime",
-                    "httpMethod": "$context.httpMethod",
-                    "resourcePath": "$context.resourcePath",
-                    "status": "$context.status",
-                    "protocol": "$context.protocol",
-                    "responseLength": "$context.responseLength",
-                    "requestLength": "$context.requestLength",
-                    "responseTime": "$context.responseTime",
-                    "sourceIp": "$context.identity.sourceIp",
-                    "userAgent": "$context.identity.userAgent",
-                    "user": "$context.identity.user",
-                    "cognitoIdentityId": "$context.identity.cognitoIdentityId",
-                    "cognitoAuthenticationType": "$context.identity.cognitoAuthenticationType",
-                    "error.message": "$context.error.message",
-                    "error.messageString": "$context.error.messageString",
-                    "integration.error": "$context.integration.error",
-                    "integration.status": "$context.integration.status",
-                    "integration.latency": "$context.integration.latency",
-                    "integration.requestId": "$context.integration.requestId"
-                })
-            }
-        )
-        
-        # Create CloudWatch metrics and alarms for security monitoring
-        self._create_security_alarms()
-        
-        # Create custom metrics for API security events
-        self._create_custom_security_metrics()
-    
-    def _create_security_alarms(self):
-        """Create CloudWatch alarms for API security monitoring"""
-        
-        # Import CloudWatch modules
-        from aws_cdk import (
-            aws_cloudwatch as cloudwatch,
-            aws_sns as sns,
-            aws_cloudwatch_actions as cloudwatch_actions
-        )
-        
-        # High error rate alarm (4xx errors)
-        client_error_alarm = cloudwatch.Alarm(
+        cdk.CfnOutput(
             self,
-            "APIClientErrorAlarm",
-            alarm_name=f"tutor-system-api-client-errors-{self.environment}",
-            alarm_description="High rate of 4xx client errors in API Gateway",
-            metric=cloudwatch.Metric(
-                namespace="AWS/ApiGateway",
-                metric_name="4XXError",
-                dimensions_map={
-                    "ApiName": self.api_gateway.rest_api_name
-                },
-                statistic="Sum",
-                period=Duration.minutes(5)
-            ),
-            threshold=50 if self.environment == "production" else 20,
-            evaluation_periods=2,
-            datapoints_to_alarm=2,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING
+            "DatabaseEndpoint",
+            value=self.database.db_instance_endpoint_address,
+            description="RDS PostgreSQL endpoint"
         )
         
-        # Server error alarm (5xx errors)
-        server_error_alarm = cloudwatch.Alarm(
+        cdk.CfnOutput(
             self,
-            "APIServerErrorAlarm",
-            alarm_name=f"tutor-system-api-server-errors-{self.environment}",
-            alarm_description="High rate of 5xx server errors in API Gateway",
-            metric=cloudwatch.Metric(
-                namespace="AWS/ApiGateway",
-                metric_name="5XXError",
-                dimensions_map={
-                    "ApiName": self.api_gateway.rest_api_name
-                },
-                statistic="Sum",
-                period=Duration.minutes(5)
-            ),
-            threshold=10 if self.environment == "production" else 5,
-            evaluation_periods=1,
-            datapoints_to_alarm=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING
+            "DatabaseSecretArn",
+            value=self.db_credentials.secret_arn,
+            description="ARN of database credentials in Secrets Manager"
         )
         
-        # High latency alarm
-        latency_alarm = cloudwatch.Alarm(
+        cdk.CfnOutput(
             self,
-            "APILatencyAlarm",
-            alarm_name=f"tutor-system-api-latency-{self.environment}",
-            alarm_description="High API Gateway latency",
-            metric=cloudwatch.Metric(
-                namespace="AWS/ApiGateway",
-                metric_name="Latency",
-                dimensions_map={
-                    "ApiName": self.api_gateway.rest_api_name
-                },
-                statistic="Average",
-                period=Duration.minutes(5)
-            ),
-            threshold=5000,  # 5 seconds
-            evaluation_periods=3,
-            datapoints_to_alarm=2,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING
+            "DBProxyFunctionName",
+            value=self.db_proxy_lambda.function_name,
+            description="DB Proxy Lambda function name"
         )
         
-        # Throttling alarm
-        throttle_alarm = cloudwatch.Alarm(
+        cdk.CfnOutput(
             self,
-            "APIThrottleAlarm",
-            alarm_name=f"tutor-system-api-throttling-{self.environment}",
-            alarm_description="API Gateway throttling detected",
-            metric=cloudwatch.Metric(
-                namespace="AWS/ApiGateway",
-                metric_name="ThrottledRequests",
-                dimensions_map={
-                    "ApiName": self.api_gateway.rest_api_name
-                },
-                statistic="Sum",
-                period=Duration.minutes(5)
-            ),
-            threshold=10,
-            evaluation_periods=1,
-            datapoints_to_alarm=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING
+            "FrontendUrl",
+            value=f"https://{self.distribution.distribution_domain_name}",
+            description="CloudFront URL for frontend application"
         )
         
-        # Create SNS topic for security alerts (if in production)
-        if self.environment == "production":
-            security_alerts_topic = sns.Topic(
-                self,
-                "SecurityAlertsTopic",
-                topic_name=f"tutor-system-security-alerts-{self.environment}",
-                display_name="Tutor System Security Alerts"
-            )
-            
-            # Add alarms to SNS topic
-            for alarm in [client_error_alarm, server_error_alarm, latency_alarm, throttle_alarm]:
-                alarm.add_alarm_action(cloudwatch_actions.SnsAction(security_alerts_topic))
-    
-    def _create_custom_security_metrics(self):
-        """Create custom CloudWatch metrics for security events"""
-        
-        # Import required modules
-        from aws_cdk import (
-            aws_logs as logs,
-            aws_logs_destinations as logs_destinations
-        )
-        
-        # Create Lambda function for custom security metrics
-        security_metrics_function = _lambda.Function(
+        cdk.CfnOutput(
             self,
-            "SecurityMetricsFunction",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="index.lambda_handler",
-            code=_lambda.Code.from_inline("""
-import json
-import boto3
-import logging
-from datetime import datetime
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-cloudwatch = boto3.client('cloudwatch')
-
-def lambda_handler(event, context):
-    try:
-        # Parse CloudWatch Logs event
-        if 'awslogs' in event:
-            import gzip
-            import base64
-            
-            # Decode and decompress log data
-            compressed_payload = base64.b64decode(event['awslogs']['data'])
-            uncompressed_payload = gzip.decompress(compressed_payload)
-            log_data = json.loads(uncompressed_payload)
-            
-            # Process log events for security metrics
-            for log_event in log_data['logEvents']:
-                try:
-                    message = json.loads(log_event['message'])
-                    
-                    # Track authentication failures
-                    if message.get('status') == '401':
-                        put_custom_metric('AuthenticationFailures', 1)
-                    
-                    # Track authorization failures
-                    elif message.get('status') == '403':
-                        put_custom_metric('AuthorizationFailures', 1)
-                    
-                    # Track rate limiting
-                    elif message.get('status') == '429':
-                        put_custom_metric('RateLimitExceeded', 1)
-                    
-                    # Track large request attempts
-                    elif int(message.get('requestLength', 0)) > 10485760:  # 10MB
-                        put_custom_metric('LargeRequestAttempts', 1)
-                        
-                except json.JSONDecodeError:
-                    # Skip non-JSON log messages
-                    continue
-        
-        return {'statusCode': 200}
-        
-    except Exception as e:
-        logger.error(f"Error processing security metrics: {str(e)}")
-        return {'statusCode': 500}
-
-def put_custom_metric(metric_name, value):
-    try:
-        cloudwatch.put_metric_data(
-            Namespace='TutorSystem/Security',
-            MetricData=[
-                {
-                    'MetricName': metric_name,
-                    'Value': value,
-                    'Unit': 'Count',
-                    'Timestamp': datetime.utcnow()
-                }
-            ]
-        )
-    except Exception as e:
-        logger.error(f"Failed to put metric {metric_name}: {str(e)}")
-            """),
-            timeout=Duration.seconds(60),
-            memory_size=256,
-            environment={
-                "ENVIRONMENT": self.environment
-            }
+            "FrontendBucketName",
+            value=self.frontend_bucket.bucket_name,
+            description="S3 bucket name for frontend"
         )
         
-        # Grant CloudWatch permissions to the security metrics function
-        security_metrics_function.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "cloudwatch:PutMetricData"
-                ],
-                resources=["*"]
-            )
+        cdk.CfnOutput(
+            self,
+            "InferenceFunctionName",
+            value=self.inference_lambda.function_name,
+            description="ML Inference Lambda function name"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "InferenceFunctionArn",
+            value=self.inference_lambda.function_arn,
+            description="ML Inference Lambda function ARN"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "AnswerEvaluatorFunctionName",
+            value=self.answer_evaluator_lambda.function_name,
+            description="Answer Evaluator Lambda function name"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "AnswerEvaluatorFunctionArn",
+            value=self.answer_evaluator_lambda.function_arn,
+            description="Answer Evaluator Lambda function ARN"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "QuizEngineFunctionName",
+            value=self.quiz_engine_lambda.function_name,
+            description="Quiz Engine Lambda function name"
+        )
+        
+        cdk.CfnOutput(
+            self,
+            "QuizEngineFunctionArn",
+            value=self.quiz_engine_lambda.function_arn,
+            description="Quiz Engine Lambda function ARN"
         )

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Simple CDK App - Auth Only Stack
+Simple CDK App - Tutor System
 """
 import aws_cdk as cdk
-from stacks.auth_only_stack import TutorSystemStack
-from stacks.simple_monitoring_stack import SimpleMonitoringStack
+from stacks.tutor_system_stack import TutorSystemStack
+from stacks.monitoring_stack import SimpleMonitoringStack
 
 app = cdk.App()
 
