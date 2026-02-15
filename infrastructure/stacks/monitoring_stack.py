@@ -35,7 +35,7 @@ class MonitoringStack(Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
-        self.environment = environment
+        self.env_name = environment  # Changed from self.env_name to avoid conflict
         self.notification_email = notification_email
         
         # Create SNS topics for different alert types
@@ -70,7 +70,7 @@ class MonitoringStack(Stack):
         topics["critical"] = sns.Topic(
             self,
             "CriticalAlertsTopic",
-            topic_name=f"tutor-system-critical-alerts-{self.environment}",
+            topic_name=f"tutor-system-critical-alerts-{self.env_name}",
             display_name="Critical Alerts - Know-It-All Tutor System"
         )
         
@@ -78,7 +78,7 @@ class MonitoringStack(Stack):
         topics["warning"] = sns.Topic(
             self,
             "WarningAlertsTopic",
-            topic_name=f"tutor-system-warning-alerts-{self.environment}",
+            topic_name=f"tutor-system-warning-alerts-{self.env_name}",
             display_name="Warning Alerts - Know-It-All Tutor System"
         )
         
@@ -86,7 +86,7 @@ class MonitoringStack(Stack):
         topics["cost"] = sns.Topic(
             self,
             "CostAlertsTopic",
-            topic_name=f"tutor-system-cost-alerts-{self.environment}",
+            topic_name=f"tutor-system-cost-alerts-{self.env_name}",
             display_name="Cost Alerts - Know-It-All Tutor System"
         )
         
@@ -94,7 +94,7 @@ class MonitoringStack(Stack):
         topics["security"] = sns.Topic(
             self,
             "SecurityAlertsTopic",
-            topic_name=f"tutor-system-security-alerts-{self.environment}",
+            topic_name=f"tutor-system-security-alerts-{self.env_name}",
             display_name="Security Alerts - Know-It-All Tutor System"
         )
         
@@ -112,7 +112,7 @@ class MonitoringStack(Stack):
         dashboard = cloudwatch.Dashboard(
             self,
             "TutorSystemDashboard",
-            dashboard_name=f"TutorSystem-{self.environment}",
+            dashboard_name=f"TutorSystem-{self.env_name}",
             period_override=cloudwatch.PeriodOverride.AUTO
         )
         
@@ -124,7 +124,7 @@ class MonitoringStack(Stack):
                     cloudwatch.Metric(
                         namespace="AWS/ApiGateway",
                         metric_name="Count",
-                        dimensions_map={"ApiName": f"tutor-system-api-{self.environment}"},
+                        dimensions_map={"ApiName": f"tutor-system-api-{self.env_name}"},
                         statistic="Sum",
                         period=Duration.minutes(5)
                     )
@@ -138,7 +138,7 @@ class MonitoringStack(Stack):
                     cloudwatch.Metric(
                         namespace="AWS/ApiGateway",
                         metric_name="Latency",
-                        dimensions_map={"ApiName": f"tutor-system-api-{self.environment}"},
+                        dimensions_map={"ApiName": f"tutor-system-api-{self.env_name}"},
                         statistic="Average",
                         period=Duration.minutes(5)
                     )
@@ -147,7 +147,7 @@ class MonitoringStack(Stack):
                     cloudwatch.Metric(
                         namespace="AWS/ApiGateway",
                         metric_name="Latency",
-                        dimensions_map={"ApiName": f"tutor-system-api-{self.environment}"},
+                        dimensions_map={"ApiName": f"tutor-system-api-{self.env_name}"},
                         statistic="Maximum",
                         period=Duration.minutes(5)
                     )
@@ -161,14 +161,14 @@ class MonitoringStack(Stack):
                     cloudwatch.Metric(
                         namespace="AWS/ApiGateway",
                         metric_name="4XXError",
-                        dimensions_map={"ApiName": f"tutor-system-api-{self.environment}"},
+                        dimensions_map={"ApiName": f"tutor-system-api-{self.env_name}"},
                         statistic="Sum",
                         period=Duration.minutes(5)
                     ),
                     cloudwatch.Metric(
                         namespace="AWS/ApiGateway",
                         metric_name="5XXError",
-                        dimensions_map={"ApiName": f"tutor-system-api-{self.environment}"},
+                        dimensions_map={"ApiName": f"tutor-system-api-{self.env_name}"},
                         statistic="Sum",
                         period=Duration.minutes(5)
                     )
@@ -193,7 +193,7 @@ class MonitoringStack(Stack):
                         cloudwatch.Metric(
                             namespace="AWS/Lambda",
                             metric_name="Invocations",
-                            dimensions_map={"FunctionName": f"{func}-{self.environment}"},
+                            dimensions_map={"FunctionName": f"{func}-{self.env_name}"},
                             statistic="Sum",
                             period=Duration.minutes(5)
                         )
@@ -202,7 +202,7 @@ class MonitoringStack(Stack):
                         cloudwatch.Metric(
                             namespace="AWS/Lambda",
                             metric_name="Errors",
-                            dimensions_map={"FunctionName": f"{func}-{self.environment}"},
+                            dimensions_map={"FunctionName": f"{func}-{self.env_name}"},
                             statistic="Sum",
                             period=Duration.minutes(5)
                         )
@@ -216,7 +216,7 @@ class MonitoringStack(Stack):
                         cloudwatch.Metric(
                             namespace="AWS/Lambda",
                             metric_name="Duration",
-                            dimensions_map={"FunctionName": f"{func}-{self.environment}"},
+                            dimensions_map={"FunctionName": f"{func}-{self.env_name}"},
                             statistic="Average",
                             period=Duration.minutes(5)
                         )
@@ -234,7 +234,7 @@ class MonitoringStack(Stack):
                     cloudwatch.Metric(
                         namespace="AWS/RDS",
                         metric_name="ServerlessDatabaseCapacity",
-                        dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.environment}"},
+                        dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.env_name}"},
                         statistic="Average",
                         period=Duration.minutes(5)
                     )
@@ -248,7 +248,7 @@ class MonitoringStack(Stack):
                     cloudwatch.Metric(
                         namespace="AWS/RDS",
                         metric_name="DatabaseConnections",
-                        dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.environment}"},
+                        dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.env_name}"},
                         statistic="Average",
                         period=Duration.minutes(5)
                     )
@@ -262,14 +262,14 @@ class MonitoringStack(Stack):
                     cloudwatch.Metric(
                         namespace="AWS/RDS",
                         metric_name="ReadLatency",
-                        dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.environment}"},
+                        dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.env_name}"},
                         statistic="Average",
                         period=Duration.minutes(5)
                     ),
                     cloudwatch.Metric(
                         namespace="AWS/RDS",
                         metric_name="WriteLatency",
-                        dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.environment}"},
+                        dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.env_name}"},
                         statistic="Average",
                         period=Duration.minutes(5)
                     )
@@ -281,7 +281,7 @@ class MonitoringStack(Stack):
         
         # CloudFront metrics (if production)
         cloudfront_widgets = []
-        if self.environment == "production":
+        if self.env_name == "production":
             cloudfront_widgets = [
                 cloudwatch.GraphWidget(
                     title="CloudFront - Requests",
@@ -342,16 +342,16 @@ class MonitoringStack(Stack):
         cloudwatch.Alarm(
             self,
             "APIGateway4xxErrorAlarm",
-            alarm_name=f"tutor-api-4xx-errors-{self.environment}",
+            alarm_name=f"tutor-api-4xx-errors-{self.env_name}",
             alarm_description="High rate of 4xx client errors in API Gateway",
             metric=cloudwatch.Metric(
                 namespace="AWS/ApiGateway",
                 metric_name="4XXError",
-                dimensions_map={"ApiName": f"tutor-system-api-{self.environment}"},
+                dimensions_map={"ApiName": f"tutor-system-api-{self.env_name}"},
                 statistic="Sum",
                 period=Duration.minutes(5)
             ),
-            threshold=50 if self.environment == "production" else 20,
+            threshold=50 if self.env_name == "production" else 20,
             evaluation_periods=2,
             datapoints_to_alarm=2,
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
@@ -365,16 +365,16 @@ class MonitoringStack(Stack):
         cloudwatch.Alarm(
             self,
             "APIGateway5xxErrorAlarm",
-            alarm_name=f"tutor-api-5xx-errors-{self.environment}",
+            alarm_name=f"tutor-api-5xx-errors-{self.env_name}",
             alarm_description="High rate of 5xx server errors in API Gateway",
             metric=cloudwatch.Metric(
                 namespace="AWS/ApiGateway",
                 metric_name="5XXError",
-                dimensions_map={"ApiName": f"tutor-system-api-{self.environment}"},
+                dimensions_map={"ApiName": f"tutor-system-api-{self.env_name}"},
                 statistic="Sum",
                 period=Duration.minutes(5)
             ),
-            threshold=10 if self.environment == "production" else 5,
+            threshold=10 if self.env_name == "production" else 5,
             evaluation_periods=1,
             datapoints_to_alarm=1,
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
@@ -388,12 +388,12 @@ class MonitoringStack(Stack):
         cloudwatch.Alarm(
             self,
             "APIGatewayLatencyAlarm",
-            alarm_name=f"tutor-api-latency-{self.environment}",
+            alarm_name=f"tutor-api-latency-{self.env_name}",
             alarm_description="High API Gateway latency",
             metric=cloudwatch.Metric(
                 namespace="AWS/ApiGateway",
                 metric_name="Latency",
-                dimensions_map={"ApiName": f"tutor-system-api-{self.environment}"},
+                dimensions_map={"ApiName": f"tutor-system-api-{self.env_name}"},
                 statistic="Average",
                 period=Duration.minutes(5)
             ),
@@ -420,12 +420,12 @@ class MonitoringStack(Stack):
             cloudwatch.Alarm(
                 self,
                 f"Lambda{func.replace('-', '')}ErrorAlarm",
-                alarm_name=f"lambda-{func}-errors-{self.environment}",
+                alarm_name=f"lambda-{func}-errors-{self.env_name}",
                 alarm_description=f"High error rate for {func} Lambda function",
                 metric=cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Errors",
-                    dimensions_map={"FunctionName": f"{func}-{self.environment}"},
+                    dimensions_map={"FunctionName": f"{func}-{self.env_name}"},
                     statistic="Sum",
                     period=Duration.minutes(5)
                 ),
@@ -443,12 +443,12 @@ class MonitoringStack(Stack):
             cloudwatch.Alarm(
                 self,
                 f"Lambda{func.replace('-', '')}DurationAlarm",
-                alarm_name=f"lambda-{func}-duration-{self.environment}",
+                alarm_name=f"lambda-{func}-duration-{self.env_name}",
                 alarm_description=f"High duration for {func} Lambda function",
                 metric=cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Duration",
-                    dimensions_map={"FunctionName": f"{func}-{self.environment}"},
+                    dimensions_map={"FunctionName": f"{func}-{self.env_name}"},
                     statistic="Average",
                     period=Duration.minutes(5)
                 ),
@@ -466,12 +466,12 @@ class MonitoringStack(Stack):
             cloudwatch.Alarm(
                 self,
                 f"Lambda{func.replace('-', '')}ThrottleAlarm",
-                alarm_name=f"lambda-{func}-throttles-{self.environment}",
+                alarm_name=f"lambda-{func}-throttles-{self.env_name}",
                 alarm_description=f"Throttling detected for {func} Lambda function",
                 metric=cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Throttles",
-                    dimensions_map={"FunctionName": f"{func}-{self.environment}"},
+                    dimensions_map={"FunctionName": f"{func}-{self.env_name}"},
                     statistic="Sum",
                     period=Duration.minutes(5)
                 ),
@@ -492,16 +492,16 @@ class MonitoringStack(Stack):
         cloudwatch.Alarm(
             self,
             "AuroraHighACUAlarm",
-            alarm_name=f"aurora-high-acu-{self.environment}",
+            alarm_name=f"aurora-high-acu-{self.env_name}",
             alarm_description="High Aurora Serverless ACU utilization",
             metric=cloudwatch.Metric(
                 namespace="AWS/RDS",
                 metric_name="ServerlessDatabaseCapacity",
-                dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.environment}"},
+                dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.env_name}"},
                 statistic="Average",
                 period=Duration.minutes(5)
             ),
-            threshold=3.5 if self.environment == "development" else 7.5,  # Near max capacity
+            threshold=3.5 if self.env_name == "development" else 7.5,  # Near max capacity
             evaluation_periods=3,
             datapoints_to_alarm=2,
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
@@ -515,12 +515,12 @@ class MonitoringStack(Stack):
         cloudwatch.Alarm(
             self,
             "AuroraHighConnectionsAlarm",
-            alarm_name=f"aurora-high-connections-{self.environment}",
+            alarm_name=f"aurora-high-connections-{self.env_name}",
             alarm_description="High number of database connections",
             metric=cloudwatch.Metric(
                 namespace="AWS/RDS",
                 metric_name="DatabaseConnections",
-                dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.environment}"},
+                dimensions_map={"DBClusterIdentifier": f"aurora-cluster-{self.env_name}"},
                 statistic="Average",
                 period=Duration.minutes(5)
             ),
@@ -541,7 +541,7 @@ class MonitoringStack(Stack):
         cloudwatch.Alarm(
             self,
             "AuthFailureRateAlarm",
-            alarm_name=f"auth-failure-rate-{self.environment}",
+            alarm_name=f"auth-failure-rate-{self.env_name}",
             alarm_description="High authentication failure rate",
             metric=cloudwatch.Metric(
                 namespace="TutorSystem/Security",
@@ -563,7 +563,7 @@ class MonitoringStack(Stack):
         cloudwatch.Alarm(
             self,
             "RateLimitExceededAlarm",
-            alarm_name=f"rate-limit-exceeded-{self.environment}",
+            alarm_name=f"rate-limit-exceeded-{self.env_name}",
             alarm_description="Rate limiting frequently exceeded",
             metric=cloudwatch.Metric(
                 namespace="TutorSystem/Security",
@@ -585,7 +585,7 @@ class MonitoringStack(Stack):
         """Create infrastructure-level monitoring alarms"""
         
         # CloudFormation stack drift detection (production only)
-        if self.environment == "production":
+        if self.env_name == "production":
             self._create_drift_detection()
     
     def _create_drift_detection(self):
@@ -708,13 +708,13 @@ def lambda_handler(event, context):
         """Create cost monitoring and budget alerts"""
         
         # Monthly budget
-        monthly_limit = 50 if self.environment == "development" else 200  # USD
+        monthly_limit = 50 if self.env_name == "development" else 200  # USD
         
         budget = budgets.CfnBudget(
             self,
             "MonthlyBudget",
             budget=budgets.CfnBudget.BudgetDataProperty(
-                budget_name=f"tutor-system-monthly-budget-{self.environment}",
+                budget_name=f"tutor-system-monthly-budget-{self.env_name}",
                 budget_type="COST",
                 time_unit="MONTHLY",
                 budget_limit=budgets.CfnBudget.SpendProperty(
@@ -723,7 +723,7 @@ def lambda_handler(event, context):
                 ),
                 cost_filters={
                     "TagKey": ["Environment"],
-                    "TagValue": [self.environment]
+                    "TagValue": [self.env_name]
                 }
             ),
             notifications_with_subscribers=[
@@ -765,9 +765,9 @@ def lambda_handler(event, context):
         application_log_group = logs.LogGroup(
             self,
             "ApplicationLogGroup",
-            log_group_name=f"/tutor-system/{self.environment}/application",
-            retention=logs.RetentionDays.ONE_MONTH if self.environment == "development" else logs.RetentionDays.THREE_MONTHS,
-            removal_policy=RemovalPolicy.DESTROY if self.environment == "development" else RemovalPolicy.RETAIN
+            log_group_name=f"/tutor-system/{self.env_name}/application",
+            retention=logs.RetentionDays.ONE_MONTH if self.env_name == "development" else logs.RetentionDays.THREE_MONTHS,
+            removal_policy=RemovalPolicy.DESTROY if self.env_name == "development" else RemovalPolicy.RETAIN
         )
         
         # Metric filters for error detection
@@ -786,7 +786,7 @@ def lambda_handler(event, context):
         cloudwatch.Alarm(
             self,
             "ApplicationErrorAlarm",
-            alarm_name=f"application-errors-{self.environment}",
+            alarm_name=f"application-errors-{self.env_name}",
             alarm_description="High rate of application errors",
             metric=cloudwatch.Metric(
                 namespace="TutorSystem/Errors",
