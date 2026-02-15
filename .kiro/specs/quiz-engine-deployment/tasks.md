@@ -317,7 +317,7 @@ This task list implements the Quiz Engine and Answer Evaluation system deploymen
   - /quiz/evaluate/batch (POST)
   - /quiz/evaluate/health (GET - no auth)
 
-**Deployment Command:** `cd infrastructure && cdk deploy --app "python app_auth_only.py" --require-approval never`
+**Deployment Command:** `cd infrastructure && cdk deploy --app "python app.py" --require-approval never`
 
 **Note:** CDK must be run from the `infrastructure/` directory for asset paths to resolve correctly.
 
@@ -591,3 +591,9 @@ This task list implements the Quiz Engine and Answer Evaluation system deploymen
 - Rollback capability should be tested before production deployment
 - Cost monitoring should be performed after each phase
 - Security validation should be performed throughout the deployment process
+
+---
+
+## Development History
+
+During iterative development, this project originally used `app_auth_only.py` as the deployment entry point. This has been renamed to `app.py` (the standard CDK convention) as of Phase 6 completion. All deployment commands in this document have been updated to reflect this change.

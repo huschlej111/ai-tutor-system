@@ -1,5 +1,5 @@
 {
-  "app": "python infrastructure/app_auth_only.py",
+  "app": "python infrastructure/app.py",
   "watch": {
     "include": [
       "**"
