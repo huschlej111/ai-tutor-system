@@ -1,0 +1,57 @@
+name: Rollback Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack_name:
+        description: 'Stack to rollback (or "all" for all stacks)'
+        required: true
+        type: choice
+        options:
+          - all
+          - NetworkStack-dev
+          - DatabaseStack-dev
+          - AuthStack-dev
+          - BackendStack-dev
+          - FrontendStack-dev
+          - MonitoringStack-dev
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  rollback:
+    name: Rollback Stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Rollback stack
+        run: |
+          if [ "${{ inputs.stack_name }}" = "all" ]; then
+            echo "Rolling back all stacks..."
+            for stack in MonitoringStack-dev FrontendStack-dev BackendStack-dev AuthStack-dev DatabaseStack-dev NetworkStack-dev; do
+              echo "Rolling back $stack..."
+              aws cloudformation cancel-update-stack --stack-name $stack 2>/dev/null || echo "$stack: no update in progress"
+              aws cloudformation continue-update-rollback --stack-name $stack 2>/dev/null || echo "$stack: no rollback needed"
+            done
+          else
+            echo "Rolling back ${{ inputs.stack_name }}..."
+            aws cloudformation cancel-update-stack --stack-name ${{ inputs.stack_name }} 2>/dev/null || echo "No update in progress"
+            aws cloudformation continue-update-rollback --stack-name ${{ inputs.stack_name }} 2>/dev/null || echo "No rollback needed"
+          fi
+
+      - name: Create summary
+        run: |
+          echo "## Rollback Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Stack:** ${{ inputs.stack_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "CloudFormation will rollback to the last stable state." >> $GITHUB_STEP_SUMMARY
