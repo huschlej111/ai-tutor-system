@@ -126,3 +126,46 @@ jobs:
         run: |
           cd infrastructure
           cdk deploy --app "python app_multistack.py" --all --require-approval never
+
+      - name: Get API URL
+        id: api_url
+        run: |
+          API_URL=$(aws cloudformation describe-stacks --stack-name BackendStack-dev --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' --output text)
+          echo "url=$API_URL" >> $GITHUB_OUTPUT
+
+  test-integration:
+    name: Integration Tests
+    needs: deploy-all
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest requests boto3
+          pip install -r infrastructure/requirements.txt
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get API URL
+        id: api_url
+        run: |
+          API_URL=$(aws cloudformation describe-stacks --stack-name BackendStack-dev --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' --output text)
+          echo "API_BASE_URL=$API_URL" >> $GITHUB_ENV
+
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v --tb=short
+        continue-on-error: true
