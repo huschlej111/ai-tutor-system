@@ -89,9 +89,7 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
           AWS_REGION: us-east-1
         run: |
-          echo "⚠️ Tests temporarily disabled - hanging in CI/CD"
-          echo "Will re-enable after investigating hang"
-          exit 0
+          pytest tests/ -v --ignore=tests/integration/ --ignore=tests/test_batch_upload_unit.py --tb=short
 
   deploy-all:
     name: Deploy All Stacks
