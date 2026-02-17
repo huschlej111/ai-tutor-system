@@ -80,8 +80,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pytest pytest-cov moto hypothesis
+          pip install pytest pytest-cov moto hypothesis psycopg psycopg-pool psycopg2-binary
           pip install -r infrastructure/requirements.txt
+          pip install -r src/lambda_functions/requirements.txt
 
       - name: Run unit tests
         run: |
