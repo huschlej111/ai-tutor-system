@@ -22,7 +22,9 @@ class SimpleMonitoringStack(Stack):
     def __init__(
         self, 
         scope: Construct, 
-        construct_id: str, 
+        construct_id: str,
+        backend_stack,  # Add backend stack dependency
+        frontend_stack,  # Add frontend stack dependency
         env_name: str,
         notification_email: Optional[str] = None,
         monthly_budget_limit: float = 10.0,  # Default $10/month
@@ -33,6 +35,13 @@ class SimpleMonitoringStack(Stack):
         self.env_name = env_name
         self.notification_email = notification_email
         self.monthly_budget_limit = monthly_budget_limit
+        
+        # Import Lambda function names from Backend Stack
+        self.quiz_engine_function_name = backend_stack.quiz_engine_lambda.function_name
+        self.answer_evaluator_function_name = backend_stack.answer_evaluator_lambda.function_name
+        
+        # Import CloudFront distribution ID from Frontend Stack
+        self.distribution_id = frontend_stack.distribution.distribution_id
         
         # Create SNS topic for alerts
         self.alert_topic = sns.Topic(
@@ -88,14 +97,14 @@ class SimpleMonitoringStack(Stack):
                 cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Invocations",
-                    dimensions_map={"FunctionName": f"TutorSystemStack-{self.env_name}-QuizEngineFunction6E7FA38A-gfMfQxsSrgIx"},
+                    dimensions_map={"FunctionName": self.quiz_engine_function_name},
                     statistic="Sum",
                     period=Duration.minutes(5)
                 ),
                 cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Errors",
-                    dimensions_map={"FunctionName": f"TutorSystemStack-{self.env_name}-QuizEngineFunction6E7FA38A-gfMfQxsSrgIx"},
+                    dimensions_map={"FunctionName": self.quiz_engine_function_name},
                     statistic="Sum",
                     period=Duration.minutes(5)
                 )
@@ -104,7 +113,7 @@ class SimpleMonitoringStack(Stack):
                 cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Duration",
-                    dimensions_map={"FunctionName": f"TutorSystemStack-{self.env_name}-QuizEngineFunction6E7FA38A-gfMfQxsSrgIx"},
+                    dimensions_map={"FunctionName": self.quiz_engine_function_name},
                     statistic="Average",
                     period=Duration.minutes(5)
                 )
@@ -118,14 +127,14 @@ class SimpleMonitoringStack(Stack):
                 cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Invocations",
-                    dimensions_map={"FunctionName": f"TutorSystemStack-{self.env_name}-AnswerEvaluatorFunction6C6629-2FW6VWlRvNyO"},
+                    dimensions_map={"FunctionName": self.answer_evaluator_function_name},
                     statistic="Sum",
                     period=Duration.minutes(5)
                 ),
                 cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Errors",
-                    dimensions_map={"FunctionName": f"TutorSystemStack-{self.env_name}-AnswerEvaluatorFunction6C6629-2FW6VWlRvNyO"},
+                    dimensions_map={"FunctionName": self.answer_evaluator_function_name},
                     statistic="Sum",
                     period=Duration.minutes(5)
                 )
@@ -134,7 +143,7 @@ class SimpleMonitoringStack(Stack):
                 cloudwatch.Metric(
                     namespace="AWS/Lambda",
                     metric_name="Duration",
-                    dimensions_map={"FunctionName": f"TutorSystemStack-{self.env_name}-AnswerEvaluatorFunction6C6629-2FW6VWlRvNyO"},
+                    dimensions_map={"FunctionName": self.answer_evaluator_function_name},
                     statistic="Average",
                     period=Duration.minutes(5)
                 )
@@ -154,7 +163,7 @@ class SimpleMonitoringStack(Stack):
             metric=cloudwatch.Metric(
                 namespace="AWS/Lambda",
                 metric_name="Errors",
-                dimensions_map={"FunctionName": f"TutorSystemStack-{self.env_name}-QuizEngineFunction6E7FA38A-gfMfQxsSrgIx"},
+                dimensions_map={"FunctionName": self.quiz_engine_function_name},
                 statistic="Sum",
                 period=Duration.minutes(5)
             ),
@@ -172,7 +181,7 @@ class SimpleMonitoringStack(Stack):
             metric=cloudwatch.Metric(
                 namespace="AWS/Lambda",
                 metric_name="Errors",
-                dimensions_map={"FunctionName": f"TutorSystemStack-{self.env_name}-AnswerEvaluatorFunction6C6629-2FW6VWlRvNyO"},
+                dimensions_map={"FunctionName": self.answer_evaluator_function_name},
                 statistic="Sum",
                 period=Duration.minutes(5)
             ),
