@@ -47,9 +47,7 @@ jobs:
           npm run build
 
       - name: Validate CDK synth
-        run: |
-          cd infrastructure
-          cdk synth --app "python app_multistack.py" --all
+        run: cdk synth --app "python infrastructure/app_multistack.py" --all
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -101,6 +99,4 @@ jobs:
           npm run build
 
       - name: Deploy all stacks
-        run: |
-          cd infrastructure
-          cdk deploy --app "python app_multistack.py" --all --require-approval never
+        run: cdk deploy --app "python infrastructure/app_multistack.py" --all --require-approval never

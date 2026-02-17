@@ -177,7 +177,7 @@ class BackendStack(Stack):
             self,
             "AnswerEvaluatorFunction",
             code=_lambda.DockerImageCode.from_image_asset(
-                "..",  # Build from project root
+                ".",  # Build from current directory (project root)
                 file="lambda/answer-evaluator/Dockerfile",
                 exclude=[
                     "infrastructure/cdk.out",
