@@ -42,6 +42,12 @@ jobs:
           pip install -r requirements.txt
 
       - name: Build frontend
+        env:
+          VITE_AWS_REGION: us-east-1
+          VITE_COGNITO_USER_POOL_ID: us-east-1_Bg1FA4097
+          VITE_COGNITO_USER_POOL_CLIENT_ID: 6d56bp4dfiu42chkdjjmln6bb9
+          VITE_API_BASE_URL: https://3kuv3v3u89.execute-api.us-east-1.amazonaws.com/prod
+          VITE_NODE_ENV: production
         run: |
           cd frontend
           npm ci
@@ -129,6 +135,12 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Build frontend
+        env:
+          VITE_AWS_REGION: us-east-1
+          VITE_COGNITO_USER_POOL_ID: us-east-1_Bg1FA4097
+          VITE_COGNITO_USER_POOL_CLIENT_ID: 6d56bp4dfiu42chkdjjmln6bb9
+          VITE_API_BASE_URL: https://3kuv3v3u89.execute-api.us-east-1.amazonaws.com/prod
+          VITE_NODE_ENV: production
         run: |
           cd frontend
           npm ci
