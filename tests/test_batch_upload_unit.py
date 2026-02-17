@@ -180,34 +180,34 @@ def test_field_length_validation(mock_db_conn):
     user_id = "test-user-123"
     email = "test@example.com"
     
-# Test domain name too short
-batch_data_short_name = {
-    'batch_metadata': {
-        'filename': 'test.json',
-        'version': '1.0',
-        'created_date': '2025-01-01',
-        'total_domains': 1,
-        'total_terms': 1
-    },
-    'domains': [
-        {
-            'node_type': 'domain',
-            'data': {
-                'name': 'A',  # Too short (< 2 characters)
-                'description': 'This domain name is too short'
-            },
-            'terms': [
-        {
-                    'node_type': 'term',
-                    'data': {
-                        'term': 'Valid Term',
-                        'definition': 'This is a valid definition'
+    # Test domain name too short
+    batch_data_short_name = {
+        'batch_metadata': {
+            'filename': 'test.json',
+            'version': '1.0',
+            'created_date': '2025-01-01',
+            'total_domains': 1,
+            'total_terms': 1
+        },
+        'domains': [
+            {
+                'node_type': 'domain',
+                'data': {
+                    'name': 'A',  # Too short (< 2 characters)
+                    'description': 'This domain name is too short'
+                },
+                'terms': [
+                    {
+                        'node_type': 'term',
+                        'data': {
+                            'term': 'Valid Term',
+                            'definition': 'This is a valid definition'
+                        }
                     }
-                }
-            ]
-        }
-    ]
-}
+                ]
+            }
+        ]
+    }
 
 validate_event = create_batch_upload_event(
     'POST', '/batch-upload/validate',
