@@ -9,7 +9,7 @@ on:
 env:
   AWS_REGION: us-east-1
   PYTHON_VERSION: '3.11'
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
 
 jobs:
   validate:
@@ -39,6 +39,12 @@ jobs:
         run: |
           cd infrastructure
           pip install -r requirements.txt
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
 
       - name: Validate CDK synth
         run: |
