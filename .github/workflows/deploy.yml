@@ -58,9 +58,31 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+  test-backend:
+    name: Test Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov moto hypothesis
+          pip install -r infrastructure/requirements.txt
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --ignore=tests/integration/ --tb=short
+
   deploy-all:
     name: Deploy All Stacks
-    needs: validate
+    needs: [validate, test-backend]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
