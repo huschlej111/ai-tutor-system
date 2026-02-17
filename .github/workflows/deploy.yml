@@ -11,6 +11,7 @@ env:
   PYTHON_VERSION: '3.11'
   NODE_VERSION: '20'
 
+# Send notifications on workflow completion
 jobs:
   validate:
     name: Validate Infrastructure
@@ -169,3 +170,25 @@ jobs:
         run: |
           pytest tests/integration/ -v --tb=short
         continue-on-error: true
+
+  notify:
+    name: Notify Results
+    needs: [deploy-all, test-integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check workflow status
+        run: |
+          echo "Deployment Status: ${{ needs.deploy-all.result }}"
+          echo "Integration Tests: ${{ needs.test-integration.result }}"
+          
+      - name: Create summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment:** ${{ needs.deploy-all.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Tests:** ${{ needs.test-integration.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Author:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View full logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
