@@ -90,7 +90,7 @@ class FrontendStack(Stack):
         self.frontend_deployment = s3deploy.BucketDeployment(
             self,
             "DeployFrontend",
-            sources=[s3deploy.Source.asset("../frontend/dist")],
+            sources=[s3deploy.Source.asset("frontend/dist")],
             destination_bucket=self.frontend_bucket,
             distribution=self.distribution,
             distribution_paths=["/*"],  # Invalidate CloudFront cache on deployment
