@@ -159,12 +159,12 @@ def test_missing_required_fields_validation(mock_db_conn):
     body = json.loads(response['body'])
     assert body['success'] is False
 
-# Check for validation errors
-if 'error' in body and 'details' in body['error'] and 'validation_errors' in body['error']['details']:
-    validation_errors = body['error']['details']['validation_errors']
-    assert any('name' in key for key in validation_errors.keys())
-else:
-    assert 'name' in str(body)
+    # Check for validation errors
+    if 'error' in body and 'details' in body['error'] and 'validation_errors' in body['error']['details']:
+        validation_errors = body['error']['details']['validation_errors']
+        assert any('name' in key for key in validation_errors.keys())
+    else:
+        assert 'name' in str(body)
 
 
 
