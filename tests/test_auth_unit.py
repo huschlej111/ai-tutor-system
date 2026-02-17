@@ -216,8 +216,10 @@ class TestAuthenticationEdgeCases:
             assert 'error' in body
             error_msg = extract_error_message(body).lower()
             assert 'already exists' in error_msg
-            
-        finally:    def test_login_with_invalid_credentials(self):
+        except Exception as e:
+            pytest.fail(f"Unexpected exception: {e}")
+    
+    def test_login_with_invalid_credentials(self):
         """Test login with various invalid credential combinations"""
         # First create a user
         email = "testlogin@example.com"
@@ -280,8 +282,10 @@ class TestAuthenticationEdgeCases:
             
             response = lambda_handler(case_insensitive_event, {})
             assert response['statusCode'] == 200  # Should succeed with case insensitive email
-                
-        finally:    def test_malformed_request_bodies(self):
+        except Exception as e:
+            pytest.fail(f"Unexpected exception: {e}")
+    
+    def test_malformed_request_bodies(self):
         """Test handling of malformed JSON request bodies"""
         malformed_requests = [
             "",  # Empty body
@@ -404,7 +408,10 @@ class TestAuthenticationEdgeCases:
                 # Cognito handles password validation, so we just check for error
                 error_msg = extract_error_message(body).lower()
                 assert 'password' in error_msg or 'required' in error_msg
-            finally:    def test_email_validation_via_registration(self):
+            except Exception as e:
+                pytest.fail(f"Unexpected exception for password '{password}': {e}")
+    
+    def test_email_validation_via_registration(self):
         """Test email validation through registration endpoint"""
         # Test various invalid emails through the registration endpoint
         invalid_emails = [
