@@ -45,18 +45,18 @@ class TestDomainValidation:
     
     @pytest.mark.unit
     def test_domain_name_required(self, mock_db_conn):
-        pass  # Mock setup
         """Test that domain name is required"""
-    user_id = "test-user-123"
-    email = "test@example.com"
-        try:
-            event = create_domain_event(
-                'POST', '/domains',
-                {'description': 'Valid description for testing'},
-                token, user_id, email
-            )
-            
-            response = lambda_handler(event, {})
+        user_id = "test-user-123"
+        email = "test@example.com"
+        token = "valid-token"
+        
+        event = create_domain_event(
+            'POST', '/domains',
+            {'description': 'Valid description for testing'},
+            token, user_id, email
+        )
+        
+        response = lambda_handler(event, {})
             
             assert response['statusCode'] == 400
             body = json.loads(response['body'])

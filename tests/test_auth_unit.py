@@ -179,7 +179,8 @@ class TestAuthenticationEdgeCases:
                     # Other weak passwords might be caught by Cognito with various error messages
                     # Just ensure it's a 400 error (already asserted above)
                     pass
-            finally:    def test_register_duplicate_email(self):
+    
+    def test_register_duplicate_email(self):
         """Test registration with duplicate email address"""
         email = "duplicate@example.com"
         user_data = {
