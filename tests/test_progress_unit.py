@@ -21,8 +21,8 @@ from lambda_functions.progress_tracking.handler import (
     # calculate_domain_progress,  # Function not implemented
     # get_term_statistics,  # Function not implemented
     # calculate_learning_streaks,  # Function not implemented
-    handle_record_attempt,
-    handle_get_dashboard
+    # handle_record_attempt,  # Function not implemented
+    # handle_get_dashboard,  # Function not implemented
 )
 
 

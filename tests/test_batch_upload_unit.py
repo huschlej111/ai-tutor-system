@@ -133,31 +133,31 @@ def test_missing_required_fields_validation(mock_db_conn):
     
     # Test missing domain name
     batch_data_missing_name = {
-    'batch_metadata': {
-        'filename': 'test.json',
-        'version': '1.0',
-        'created_date': '2025-01-01',
-        'total_domains': 1,
-        'total_terms': 0
-    },
-    'domains': [
-        {
-            'node_type': 'domain',
-            'data': {
-                'description': 'This domain is missing a name'
-            },
-            'terms': []
-        }
-    ]
-}
+        'batch_metadata': {
+            'filename': 'test.json',
+            'version': '1.0',
+            'created_date': '2025-01-01',
+            'total_domains': 1,
+            'total_terms': 0
+        },
+        'domains': [
+            {
+                'node_type': 'domain',
+                'data': {
+                    'description': 'This domain is missing a name'
+                },
+                'terms': []
+            }
+        ]
+    }
 
-validate_event['body'] = json.dumps({'batch_data': batch_data_missing_name})
-response = lambda_handler(validate_event, {})
+    validate_event['body'] = json.dumps({'batch_data': batch_data_missing_name})
+    response = lambda_handler(validate_event, {})
 
-# Should return validation error
-assert response['statusCode'] == 400
-body = json.loads(response['body'])
-assert body['success'] is False
+    # Should return validation error
+    assert response['statusCode'] == 400
+    body = json.loads(response['body'])
+    assert body['success'] is False
 
 # Check for validation errors
 if 'error' in body and 'details' in body['error'] and 'validation_errors' in body['error']['details']:
