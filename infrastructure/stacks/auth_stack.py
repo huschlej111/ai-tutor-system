@@ -77,7 +77,7 @@ class AuthStack(Stack):
             "PreSignUpTrigger",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=_lambda.Code.from_asset("../src/lambda_functions/cognito_pre_signup"),
+            code=_lambda.Code.from_asset("src/lambda_functions/cognito_pre_signup"),
             timeout=Duration.seconds(10),
             memory_size=128,
             description="Cognito Pre-SignUp trigger - auto-confirms users"
