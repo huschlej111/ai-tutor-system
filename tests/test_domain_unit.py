@@ -57,11 +57,11 @@ class TestDomainValidation:
         )
         
         response = lambda_handler(event, {})
-            
-            assert response['statusCode'] == 400
-            body = json.loads(response['body'])
-            assert 'validation_errors' in body['error']['details']
-            assert 'name' in body['error']['details']['validation_errors']
+        
+        assert response['statusCode'] == 400
+        body = json.loads(response['body'])
+        assert 'validation_errors' in body['error']['details']
+        assert 'name' in body['error']['details']['validation_errors']
             
         finally:    def test_domain_description_required(self, mock_db_conn):
         pass  # Mock setup

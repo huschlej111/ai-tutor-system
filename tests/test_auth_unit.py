@@ -179,6 +179,9 @@ class TestAuthenticationEdgeCases:
                     # Other weak passwords might be caught by Cognito with various error messages
                     # Just ensure it's a 400 error (already asserted above)
                     pass
+            except Exception as e:
+                # If exception occurs, test fails
+                pytest.fail(f"Unexpected exception: {e}")
     
     def test_register_duplicate_email(self):
         """Test registration with duplicate email address"""
