@@ -205,9 +205,16 @@ class BackendStack(Stack):
             rest_api_name="know-it-all-tutor-api-multistack-dev",
             description="API for Know-It-All Tutor System",
             default_cors_preflight_options=apigateway.CorsOptions(
-                allow_origins=["*"],  # Will be restricted in production
+                allow_origins=["https://d3awlgby2429wc.cloudfront.net"],
                 allow_methods=apigateway.Cors.ALL_METHODS,
-                allow_headers=["Content-Type", "Authorization"]
+                allow_headers=[
+                    "Content-Type",
+                    "Authorization",
+                    "X-Amz-Date",
+                    "X-Api-Key",
+                    "X-Amz-Security-Token"
+                ],
+                allow_credentials=True
             ),
             deploy_options=apigateway.StageOptions(
                 stage_name="prod",
