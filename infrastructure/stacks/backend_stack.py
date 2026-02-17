@@ -46,7 +46,7 @@ class BackendStack(Stack):
             self,
             "SharedUtilitiesLayer",
             code=_lambda.Code.from_asset(
-                "lambda_layer",
+                "infrastructure/lambda_layer",
                 bundling=cdk.BundlingOptions(
                     image=_lambda.Runtime.PYTHON_3_12.bundling_image,
                     command=[
