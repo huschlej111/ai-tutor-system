@@ -47,10 +47,11 @@ To empower students of any subject by providing an interactive, web-based learni
 ## 🌐 Live Environments
 
 ### Development Environment
-- **Frontend URL**: https://d1o8fugfe04j49.cloudfront.net
-- **API URL**: https://o06264kkzj.execute-api.us-east-1.amazonaws.com/prod/
+- **Frontend URL**: https://d3awlgby2429wc.cloudfront.net
+- **API URL**: https://3kuv3v3u89.execute-api.us-east-1.amazonaws.com/prod/
+- **Cognito User Pool**: us-east-1_Bg1FA4097
 - **CloudWatch Dashboard**: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=TutorSystem-dev
-- **Status**: Active (AWS Free Tier)
+- **Status**: Active (AWS Free Tier) - Testing multi-stack architecture
 
 ## 🚀 Key Features
 
