@@ -16,7 +16,7 @@ def create_response(
     # Default headers with CORS
     default_headers = {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': 'https://d1o8fugfe04j49.cloudfront.net',
+        'Access-Control-Allow-Origin': 'https://d3awlgby2429wc.cloudfront.net',
         'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
         'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
         'Access-Control-Allow-Credentials': 'true'
