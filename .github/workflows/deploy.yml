@@ -89,10 +89,17 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
           AWS_REGION: us-east-1
         run: |
-          echo "⚠️ Unit tests disabled - multiple tests hang in CI/CD"
-          echo "Tests pass locally but hang in GitHub Actions"
-          echo "Skipping to unblock deployment"
-          exit 0
+          pytest tests/ -v \
+            --ignore=tests/integration/ \
+            --ignore=tests/test_batch_upload_properties.py \
+            --ignore=tests/test_domain_properties.py \
+            --ignore=tests/test_progress_properties.py \
+            --ignore=tests/test_quiz_properties.py \
+            --ignore=tests/test_answer_evaluation_properties.py \
+            --ignore=tests/test_auth_properties.py \
+            --ignore=tests/test_cognito_auth_properties.py \
+            --ignore=tests/test_database_schema_properties.py \
+            --tb=short
 
   deploy-all:
     name: Deploy All Stacks
