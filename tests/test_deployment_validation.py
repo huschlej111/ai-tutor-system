@@ -10,7 +10,7 @@ import time
 import subprocess
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
-from moto import mock_cloudformation, mock_lambda, mock_apigateway, mock_rds, mock_s3, mock_cognito_idp
+from moto import mock_aws
 import os
 
 

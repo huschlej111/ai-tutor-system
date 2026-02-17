@@ -74,12 +74,12 @@ def test_malformed_json_validation(mock_db_conn):
     assert response['statusCode'] == 400
     body = json.loads(response['body'])
     assert body['success'] is False
-        # Check for errors in the response structure
-        if 'error' in body and 'details' in body['error'] and 'validation_errors' in body['error']['details']:
-            assert 'batch_data' in body['error']['details']['validation_errors']
-        elif 'errors' in body:
-            assert 'batch_data' in body['errors']
-        elif 'message' in body:
+    # Check for errors in the response structure
+    if 'error' in body and 'details' in body['error'] and 'validation_errors' in body['error']['details']:
+        assert 'batch_data' in body['error']['details']['validation_errors']
+    elif 'errors' in body:
+        assert 'batch_data' in body['errors']
+    elif 'message' in body:
             assert 'batch_data' in body['message']
         else:
             # Fallback check
