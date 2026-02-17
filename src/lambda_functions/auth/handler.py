@@ -19,14 +19,11 @@ from response_utils import create_response, handle_error
 from security_controls import extract_client_info
 from security_monitoring import SecurityMonitor
 from security_middleware import security_middleware, create_secure_response, validate_email
-from db_proxy_client import DBProxyClient
+from shared.database import get_db_connection
 
 
 # Initialize Cognito client
 cognito_client = boto3.client('cognito-idp', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
-
-# Initialize DB Proxy client
-db_proxy = DBProxyClient(os.environ.get('DB_PROXY_FUNCTION_NAME'))
 
 # Get Cognito configuration from environment
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
@@ -224,14 +221,19 @@ def handle_register(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Create user record in database
         try:
-            db_proxy.execute_query(
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
                 """
                 INSERT INTO users (cognito_sub, email, first_name, last_name, is_active)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (cognito_sub) DO NOTHING
                 """,
-                params=[response['UserSub'], email, first_name or None, last_name or None, True]
+                [response['UserSub'], email, first_name or None, last_name or None, True]
             )
+            conn.commit()
+            cursor.close()
+            conn.close()
             print(f"Created user record in database for {email}")
         except Exception as db_error:
             print(f"Warning: Failed to create user in database: {db_error}")
