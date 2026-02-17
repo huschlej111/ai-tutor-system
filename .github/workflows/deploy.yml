@@ -85,6 +85,9 @@ jobs:
           pip install -r src/lambda_functions/requirements.txt
 
       - name: Run unit tests
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_REGION: us-east-1
         run: |
           pytest tests/ -v --ignore=tests/integration/ --tb=short
 
