@@ -18,9 +18,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from lambda_functions.progress_tracking.handler import (
     lambda_handler,
     # calculate_term_mastery,  # Function not implemented
-    calculate_domain_progress,
-    get_term_statistics,
-    calculate_learning_streaks,
+    # calculate_domain_progress,  # Function not implemented
+    # get_term_statistics,  # Function not implemented
+    # calculate_learning_streaks,  # Function not implemented
     handle_record_attempt,
     handle_get_dashboard
 )

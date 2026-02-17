@@ -16,9 +16,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from shared.database import get_db_cursor, execute_query, execute_query_one
 from lambda_functions.progress_tracking.handler import (
-    calculate_term_mastery, 
-    calculate_domain_progress,
-    get_term_statistics
+    lambda_handler,
+    # calculate_term_mastery,  # Function not implemented
+    # calculate_domain_progress,  # Function not implemented
+    # get_term_statistics,  # Function not implemented
 )
 
 
