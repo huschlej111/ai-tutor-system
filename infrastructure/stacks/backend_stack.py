@@ -46,7 +46,7 @@ class BackendStack(Stack):
             self,
             "SharedUtilitiesLayer",
             code=_lambda.Code.from_asset(
-                "infrastructure/lambda_layer",
+                "lambda_layer",
                 bundling=cdk.BundlingOptions(
                     image=_lambda.Runtime.PYTHON_3_12.bundling_image,
                     command=[
@@ -66,7 +66,7 @@ class BackendStack(Stack):
             "DBProxyFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=_lambda.Code.from_asset("src/lambda_functions/db_proxy"),
+            code=_lambda.Code.from_asset("../src/lambda_functions/db_proxy"),
             timeout=Duration.seconds(30),
             memory_size=256,
             layers=[self.shared_layer],
@@ -89,7 +89,7 @@ class BackendStack(Stack):
             "AuthFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=_lambda.Code.from_asset("src/lambda_functions/auth"),
+            code=_lambda.Code.from_asset("../src/lambda_functions/auth"),
             timeout=Duration.seconds(30),
             memory_size=256,
             layers=[self.shared_layer],
@@ -110,7 +110,7 @@ class BackendStack(Stack):
             "ProfileFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=_lambda.Code.from_asset("src/lambda_functions/user_profile"),
+            code=_lambda.Code.from_asset("../src/lambda_functions/user_profile"),
             timeout=Duration.seconds(30),
             memory_size=256,
             layers=[self.shared_layer],
@@ -127,7 +127,7 @@ class BackendStack(Stack):
             "DomainFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=_lambda.Code.from_asset("src/lambda_functions/domain_management"),
+            code=_lambda.Code.from_asset("../src/lambda_functions/domain_management"),
             timeout=Duration.seconds(30),
             memory_size=256,
             layers=[self.shared_layer],
@@ -144,7 +144,7 @@ class BackendStack(Stack):
             "ProgressFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=_lambda.Code.from_asset("src/lambda_functions/progress_tracking"),
+            code=_lambda.Code.from_asset("../src/lambda_functions/progress_tracking"),
             timeout=Duration.seconds(30),
             memory_size=256,
             layers=[self.shared_layer],
@@ -161,7 +161,7 @@ class BackendStack(Stack):
             "QuizEngineFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=_lambda.Code.from_asset("src/lambda_functions/quiz_engine"),
+            code=_lambda.Code.from_asset("../src/lambda_functions/quiz_engine"),
             timeout=Duration.seconds(30),
             memory_size=512,
             layers=[self.shared_layer],
@@ -177,7 +177,7 @@ class BackendStack(Stack):
             self,
             "AnswerEvaluatorFunction",
             code=_lambda.DockerImageCode.from_image_asset(
-                ".",  # Build from current directory (project root)
+                "..",  # Build from project root
                 file="lambda/answer-evaluator/Dockerfile",
                 exclude=[
                     "infrastructure/cdk.out",
