@@ -96,15 +96,6 @@ class AuthStack(Stack):
             self.pre_signup_lambda
         )
         
-        # Export user pool ARN for PostConfirmation trigger (created in BackendStack)
-        CfnOutput(
-            self,
-            "UserPoolArn",
-            value=self.user_pool.user_pool_arn,
-            description="Cognito User Pool ARN",
-            export_name=f"{construct_id}-UserPoolArn"
-        )
-        
         # CloudFormation Outputs
         CfnOutput(
             self,
