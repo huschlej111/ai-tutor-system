@@ -1,28 +1,29 @@
 """
 Post-confirmation Lambda trigger for Cognito User Pool
-Creates user profile in database after successful confirmation
+Creates user record in database after successful registration
 """
 import json
 import logging
-import os
 import sys
+import os
 from typing import Dict, Any
 
 # Add shared modules to path
 sys.path.append('/opt/python')
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../shared'))
 
-from database import DatabaseConnection
-from secrets_client import SecretsClient
+from db_proxy_client import DBProxyClient
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Initialize DB Proxy client
+db_proxy = DBProxyClient(os.environ.get('DB_PROXY_FUNCTION_NAME'))
+
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Post-confirmation trigger to create user profile in database
+    Post-confirmation trigger to create user in database
     
     Args:
         event: Cognito trigger event
@@ -32,81 +33,33 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         Event (unchanged)
     """
     try:
-        logger.info(f"Post-confirmation trigger called for user: {event.get('userName', 'unknown')}")
-        logger.info(f"Trigger source: {event.get('triggerSource', 'unknown')}")
-        
-        # Only process actual confirmations
-        if event.get('triggerSource') not in ['PostConfirmation_ConfirmSignUp', 'PostConfirmation_ConfirmForgotPassword']:
-            logger.info("Skipping non-confirmation trigger")
-            return event
+        logger.info(f"Post-confirmation trigger for user: {event.get('userName')}")
         
         # Get user attributes
         user_attributes = event.get('request', {}).get('userAttributes', {})
-        user_id = user_attributes.get('sub')  # Cognito user ID
+        cognito_sub = event.get('userName')  # This is the Cognito sub
         email = user_attributes.get('email', '')
-        given_name = user_attributes.get('given_name', '')
-        family_name = user_attributes.get('family_name', '')
+        first_name = user_attributes.get('given_name')
+        last_name = user_attributes.get('family_name')
         
-        if not user_id or not email:
-            logger.error("Missing required user attributes")
-            raise Exception("Missing required user attributes")
-        
-        # Create user profile in database
-        create_user_profile(user_id, email, given_name, family_name)
-        
-        logger.info(f"Successfully created user profile for: {user_id}")
+        # Create user record in database
+        try:
+            db_proxy.execute_query(
+                """
+                INSERT INTO users (cognito_sub, email, first_name, last_name, is_active)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (cognito_sub) DO NOTHING
+                """,
+                params=[cognito_sub, email, first_name or None, last_name or None, True]
+            )
+            logger.info(f"Created user record in database for {email}")
+        except Exception as db_error:
+            logger.error(f"Failed to create user in database: {db_error}")
+            # Don't fail the confirmation if DB insert fails
         
         return event
         
     except Exception as e:
-        logger.error(f"Post-confirmation trigger error: {str(e)}")
-        # Don't raise exception here as user is already confirmed
-        # Just log the error and continue
+        logger.error(f"Post-confirmation trigger error: {e}", exc_info=True)
+        # Return event anyway - don't block user confirmation
         return event
-
-
-def create_user_profile(user_id: str, email: str, given_name: str = '', family_name: str = '') -> None:
-    """
-    Create user profile in PostgreSQL database
-    
-    Args:
-        user_id: Cognito user ID (sub)
-        email: User email address
-        given_name: User's first name
-        family_name: User's last name
-    """
-    db_connection = None
-    
-    try:
-        # Get database connection
-        secrets_client = SecretsClient()
-        db_connection = DatabaseConnection(secrets_client)
-        
-        # Check if user already exists
-        existing_user = db_connection.execute_query(
-            "SELECT user_id FROM users WHERE cognito_user_id = %s",
-            (user_id,)
-        )
-        
-        if existing_user:
-            logger.info(f"User profile already exists for: {user_id}")
-            return
-        
-        # Insert new user profile
-        db_connection.execute_query(
-            """
-            INSERT INTO users (cognito_user_id, email, first_name, last_name, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, NOW(), NOW())
-            """,
-            (user_id, email, given_name, family_name)
-        )
-        
-        logger.info(f"Created user profile in database for: {user_id}")
-        
-    except Exception as e:
-        logger.error(f"Error creating user profile: {str(e)}")
-        raise e
-        
-    finally:
-        if db_connection:
-            db_connection.close()
