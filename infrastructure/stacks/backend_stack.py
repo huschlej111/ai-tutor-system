@@ -320,6 +320,39 @@ class BackendStack(Stack):
             authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
+        # Create Post-Confirmation Lambda Trigger for Cognito
+        # This creates user records in database after successful registration
+        self.post_confirmation_lambda = _lambda.Function(
+            self,
+            "PostConfirmationTrigger",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="post_confirmation.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/cognito_triggers"),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            layers=[self.shared_layer],
+            environment={
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+            },
+            description="Cognito Post-Confirmation trigger - creates user in database"
+        )
+        
+        # Grant permission to invoke DB Proxy
+        self.db_proxy_lambda.grant_invoke(self.post_confirmation_lambda)
+        
+        # Grant Cognito permission to invoke the Lambda
+        self.post_confirmation_lambda.add_permission(
+            "CognitoInvoke",
+            principal=iam.ServicePrincipal("cognito-idp.amazonaws.com"),
+            source_arn=self.user_pool.user_pool_arn
+        )
+        
+        # Add trigger to User Pool
+        self.user_pool.add_trigger(
+            cognito.UserPoolOperation.POST_CONFIRMATION,
+            self.post_confirmation_lambda
+        )
+        
         # CloudFormation Outputs
         CfnOutput(
             self,
