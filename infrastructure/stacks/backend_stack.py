@@ -347,10 +347,13 @@ class BackendStack(Stack):
             source_arn=self.user_pool.user_pool_arn
         )
         
-        # Add trigger to User Pool
-        self.user_pool.add_trigger(
-            cognito.UserPoolOperation.POST_CONFIRMATION,
-            self.post_confirmation_lambda
+        # Output Lambda ARN for manual Cognito configuration
+        CfnOutput(
+            self,
+            "PostConfirmationLambdaArn",
+            value=self.post_confirmation_lambda.function_arn,
+            description="PostConfirmation Lambda ARN - manually add to Cognito User Pool",
+            export_name=f"{construct_id}-PostConfirmationLambdaArn"
         )
         
         # CloudFormation Outputs
