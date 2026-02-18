@@ -223,6 +223,24 @@ class BackendStack(Stack):
             )
         )
         
+        # Add CORS headers to error responses (401, 403, 500, etc.)
+        self.api.add_gateway_response(
+            "Unauthorized",
+            type=apigateway.ResponseType.UNAUTHORIZED,
+            response_headers={
+                "Access-Control-Allow-Origin": "'https://d3awlgby2429wc.cloudfront.net'",
+                "Access-Control-Allow-Credentials": "'true'"
+            }
+        )
+        self.api.add_gateway_response(
+            "AccessDenied",
+            type=apigateway.ResponseType.ACCESS_DENIED,
+            response_headers={
+                "Access-Control-Allow-Origin": "'https://d3awlgby2429wc.cloudfront.net'",
+                "Access-Control-Allow-Credentials": "'true'"
+            }
+        )
+        
         # Create Cognito Authorizer
         authorizer = apigateway.CognitoUserPoolsAuthorizer(
             self,
