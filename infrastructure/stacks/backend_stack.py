@@ -2,6 +2,7 @@
 Backend Stack for Know-It-All Tutor System
 Contains Lambda functions and API Gateway
 """
+import json
 import aws_cdk as cdk
 from aws_cdk import (
     Stack,
@@ -10,6 +11,7 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_iam as iam,
     aws_ecr_assets as ecr_assets,
+    custom_resources as cr,
     Duration,
     CfnOutput
 )
@@ -32,6 +34,9 @@ class BackendStack(Stack):
         **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
+        
+        # Store auth_stack reference
+        self.auth_stack = auth_stack
         
         # Import resources from other stacks
         self.vpc = network_stack.vpc
@@ -347,13 +352,112 @@ class BackendStack(Stack):
             source_arn=self.user_pool.user_pool_arn
         )
         
-        # Output Lambda ARN for manual Cognito configuration
-        CfnOutput(
+        # Create custom resource to update Cognito User Pool with PostConfirmation trigger
+        # This is needed because the User Pool is in a different stack
+        update_cognito_role = iam.Role(
             self,
-            "PostConfirmationLambdaArn",
-            value=self.post_confirmation_lambda.function_arn,
-            description="PostConfirmation Lambda ARN - manually add to Cognito User Pool",
-            export_name=f"{construct_id}-PostConfirmationLambdaArn"
+            "UpdateCognitoRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole")
+            ],
+            inline_policies={
+                "UpdateCognito": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=["cognito-idp:UpdateUserPool", "cognito-idp:DescribeUserPool"],
+                            resources=[self.user_pool.user_pool_arn]
+                        )
+                    ]
+                )
+            }
+        )
+        
+        update_cognito_lambda = _lambda.Function(
+            self,
+            "UpdateCognitoTrigger",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="index.handler",
+            code=_lambda.Code.from_inline("""
+import boto3
+import json
+import cfnresponse
+
+cognito = boto3.client('cognito-idp')
+
+def handler(event, context):
+    try:
+        user_pool_id = event['ResourceProperties']['UserPoolId']
+        post_confirmation_arn = event['ResourceProperties']['PostConfirmationArn']
+        pre_signup_arn = event['ResourceProperties']['PreSignUpArn']
+        
+        if event['RequestType'] in ['Create', 'Update']:
+            # Get current config
+            response = cognito.describe_user_pool(UserPoolId=user_pool_id)
+            current_config = response['UserPool'].get('LambdaConfig', {})
+            
+            # Update with both triggers
+            cognito.update_user_pool(
+                UserPoolId=user_pool_id,
+                LambdaConfig={
+                    'PreSignUp': pre_signup_arn,
+                    'PostConfirmation': post_confirmation_arn
+                }
+            )
+            print(f"Updated User Pool {user_pool_id} with PostConfirmation trigger")
+        
+        cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+    except Exception as e:
+        print(f"Error: {e}")
+        cfnresponse.send(event, context, cfnresponse.FAILED, {})
+"""),
+            role=update_cognito_role,
+            timeout=Duration.seconds(30)
+        )
+        
+        # Create custom resource
+        from aws_cdk import custom_resources as cr
+        cr.AwsCustomResource(
+            self,
+            "UpdateUserPoolTrigger",
+            on_create=cr.AwsSdkCall(
+                service="Lambda",
+                action="invoke",
+                parameters={
+                    "FunctionName": update_cognito_lambda.function_name,
+                    "Payload": json.dumps({
+                        "RequestType": "Create",
+                        "ResourceProperties": {
+                            "UserPoolId": self.user_pool.user_pool_id,
+                            "PostConfirmationArn": self.post_confirmation_lambda.function_arn,
+                            "PreSignUpArn": self.auth_stack.pre_signup_lambda.function_arn
+                        }
+                    })
+                },
+                physical_resource_id=cr.PhysicalResourceId.of("UpdateUserPoolTrigger")
+            ),
+            on_update=cr.AwsSdkCall(
+                service="Lambda",
+                action="invoke",
+                parameters={
+                    "FunctionName": update_cognito_lambda.function_name,
+                    "Payload": json.dumps({
+                        "RequestType": "Update",
+                        "ResourceProperties": {
+                            "UserPoolId": self.user_pool.user_pool_id,
+                            "PostConfirmationArn": self.post_confirmation_lambda.function_arn,
+                            "PreSignUpArn": self.auth_stack.pre_signup_lambda.function_arn
+                        }
+                    })
+                },
+                physical_resource_id=cr.PhysicalResourceId.of("UpdateUserPoolTrigger")
+            ),
+            policy=cr.AwsCustomResourcePolicy.from_statements([
+                iam.PolicyStatement(
+                    actions=["lambda:InvokeFunction"],
+                    resources=[update_cognito_lambda.function_arn]
+                )
+            ])
         )
         
         # CloudFormation Outputs
