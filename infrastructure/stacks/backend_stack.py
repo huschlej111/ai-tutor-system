@@ -160,6 +160,23 @@ class BackendStack(Stack):
         )
         self.db_proxy_lambda.grant_invoke(self.progress_lambda)
         
+        # Create Batch Upload Lambda
+        self.batch_upload_lambda = _lambda.Function(
+            self,
+            "BatchUploadFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset("../src/lambda_functions/batch_upload"),
+            timeout=Duration.seconds(60),
+            memory_size=512,
+            layers=[self.shared_layer],
+            environment={
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+            },
+            description="Batch upload validation and processing"
+        )
+        self.db_proxy_lambda.grant_invoke(self.batch_upload_lambda)
+        
         # Create Quiz Engine Lambda
         self.quiz_engine_lambda = _lambda.Function(
             self,
@@ -288,6 +305,21 @@ class BackendStack(Stack):
         domains_resource.add_method(
             "GET",
             apigateway.LambdaIntegration(self.domain_lambda),
+            authorizer=authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
+        # Batch Upload routes (with authorization)
+        batch_resource = self.api.root.add_resource("batch")
+        batch_resource.add_resource("validate").add_method(
+            "POST",
+            apigateway.LambdaIntegration(self.batch_upload_lambda),
+            authorizer=authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        batch_resource.add_resource("upload").add_method(
+            "POST",
+            apigateway.LambdaIntegration(self.batch_upload_lambda),
             authorizer=authorizer,
             authorization_type=apigateway.AuthorizationType.COGNITO
         )
