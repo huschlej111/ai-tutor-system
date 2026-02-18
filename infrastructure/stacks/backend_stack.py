@@ -284,6 +284,15 @@ class BackendStack(Stack):
             authorization_type=apigateway.AuthorizationType.COGNITO
         )
         
+        # Add /progress/dashboard endpoint
+        dashboard_resource = progress_resource.add_resource("dashboard")
+        dashboard_resource.add_method(
+            "GET",
+            apigateway.LambdaIntegration(self.progress_lambda),
+            authorizer=authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        
         # CloudFormation Outputs
         CfnOutput(
             self,
