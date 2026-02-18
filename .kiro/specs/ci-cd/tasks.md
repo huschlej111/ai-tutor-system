@@ -559,3 +559,69 @@ The following functions are referenced in tests but not implemented in `src/lamb
 - **Infrastructure Cost:** $0 increase (same resources)
 - **Developer Time Saved:** 2-3 hours/week
 - **Incident Response Time:** < 15 minutes (from 1 hour)
+
+
+---
+
+## Future: Production Environment Rollout (Out of Scope)
+
+### Recommended Approach: Context-Based Multi-Environment (Option C)
+
+When ready to deploy production, use CDK context variables for environment separation:
+
+**Implementation:**
+```python
+# app.py (renamed from app_multistack.py)
+stage = app.node.try_get_context("stage") or "dev"
+
+network_stack = NetworkStack(
+    app, 
+    f"NetworkStack-{stage}",
+    env=cdk.Environment(account="...", region="us-east-1")
+)
+
+backend_stack = BackendStack(
+    app,
+    f"BackendStack-{stage}",
+    network_stack=network_stack,
+    env=cdk.Environment(account="...", region="us-east-1")
+)
+
+# Tag for cost allocation
+cdk.Tags.of(network_stack).add("Environment", stage)
+cdk.Tags.of(backend_stack).add("Environment", stage)
+```
+
+**Deployment:**
+```bash
+# Dev environment
+cdk deploy --all --context stage=dev
+
+# Prod environment  
+cdk deploy --all --context stage=prod
+```
+
+**CI/CD Workflows:**
+```yaml
+# .github/workflows/deploy-dev.yml
+- name: Deploy Dev
+  run: cdk deploy --all --context stage=dev --require-approval never
+
+# .github/workflows/deploy-prod.yml (manual trigger)
+- name: Deploy Prod
+  run: cdk deploy --all --context stage=prod --require-approval never
+```
+
+**Benefits:**
+1. **Cost Tracking:** AWS Cost Explorer can filter by Environment tag (dev vs prod)
+2. **Single Codebase:** Same stack definitions for all environments
+3. **Easy Scaling:** Add staging/qa with just a context variable
+4. **Clear Separation:** Stack names clearly indicate environment
+5. **Flexible Deployment:** Deploy specific environments without affecting others
+
+**Cost Allocation Tags:**
+- `Environment: dev` - Development costs
+- `Environment: prod` - Production costs
+- `Project: ai-tutor-system` - Overall project costs
+
+**Note:** This is intentionally left out of scope for the current project. Focus remains on dev environment stability and CI/CD pipeline maturity.
