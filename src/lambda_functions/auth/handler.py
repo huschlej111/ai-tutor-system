@@ -19,7 +19,7 @@ from response_utils import create_response, handle_error
 from security_controls import extract_client_info
 from security_monitoring import SecurityMonitor
 from security_middleware import security_middleware, create_secure_response, validate_email
-from shared.db_proxy_client import DBProxyClient
+from db_proxy_client import DBProxyClient
 
 
 # Initialize Cognito client

@@ -6,11 +6,11 @@ import json
 import os
 import logging
 from typing import Dict, Any, List, Optional
-from shared.database import get_db_connection
-from shared.response_utils import create_response, handle_error
-from shared.auth_utils import extract_user_from_cognito_event
-from shared.model_utils import get_model_manager, initialize_model
-from shared.evaluation_config import EvaluationConfig, FeedbackTemplates, get_evaluation_config
+from database import get_db_connection
+from response_utils import create_response, handle_error
+from auth_utils import extract_user_from_cognito_event
+from model_utils import get_model_manager, initialize_model
+from evaluation_config import EvaluationConfig, FeedbackTemplates, get_evaluation_config
 
 logger = logging.getLogger(__name__)
 
