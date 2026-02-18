@@ -7,9 +7,9 @@ import boto3
 import json
 import sys
 
-# Configuration
-USER_POOL_ID = "us-east-1_xapIGvbJE"
-DB_PROXY_FUNCTION = "TutorSystemStack-dev-DBProxyFunction9188AB04-FbVKref3emug"
+# Configuration - Updated for multi-stack deployment
+USER_POOL_ID = "us-east-1_Bg1FA4097"  # AuthStack-dev User Pool
+DB_PROXY_FUNCTION = "BackendStack-dev-DBProxyFunction9188AB04-tTKiBiDWe6Ww"  # BackendStack-dev DB Proxy
 REGION = "us-east-1"
 
 # Test email patterns to match
