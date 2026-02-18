@@ -6,8 +6,14 @@ Requirements: 8.1, 8.2, 8.3, 8.4
 import json
 import uuid
 import logging
+import sys
+import os
 from typing import Dict, Any, List, Optional, Tuple
-from database import get_db_cursor, execute_query, execute_query_one, get_db_connection
+
+# Add shared modules to path
+sys.path.append('/opt/python')
+
+from db_proxy_client import DBProxyClient
 from response_utils import (
     create_success_response, create_created_response, create_error_response,
     create_validation_error_response, create_not_found_response,
@@ -18,6 +24,10 @@ from auth_utils import extract_user_from_cognito_event
 from authorization_utils import validate_api_access, AuthorizationError
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Initialize DB Proxy client
+db_proxy = DBProxyClient(os.environ.get('DB_PROXY_FUNCTION_NAME'))
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -304,7 +314,7 @@ def check_existing_duplicates(domains: List[Dict[str, Any]], user_id: str) -> Li
         domain_name = domain_data['name'].strip()
         
         # Check if domain already exists for this user
-        existing_domain = execute_query_one(
+        existing_domain = db_proxy.execute_query_one(
             """
             SELECT id FROM tree_nodes 
             WHERE user_id = %s AND node_type = 'domain' 
@@ -618,7 +628,7 @@ def record_upload_history(user_id: str, filename: str, domains_count: int, terms
         }
     
     try:
-        execute_query(
+        db_proxy.execute_query(
             """
             INSERT INTO batch_uploads (id, admin_id, filename, subject_count, status, error_message, metadata, processed_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
@@ -649,7 +659,7 @@ def handle_get_upload_history(event: Dict[str, Any], user_id: str) -> Dict[str, 
     """
     try:
         # Get upload history for the user
-        uploads = execute_query(
+        uploads = db_proxy.execute_query(
             """
             SELECT 
                 id, filename, subject_count, status, uploaded_at, 
