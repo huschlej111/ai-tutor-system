@@ -11,7 +11,7 @@ import logging
 # Add shared modules to path
 sys.path.append('/opt/python')
 
-from shared.db_proxy_client import DBProxyClient
+from db_proxy_client import DBProxyClient
 from response_utils import create_success_response, create_error_response
 
 logger = logging.getLogger(__name__)

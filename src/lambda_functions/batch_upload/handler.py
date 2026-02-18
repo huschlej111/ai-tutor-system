@@ -7,15 +7,15 @@ import json
 import uuid
 import logging
 from typing import Dict, Any, List, Optional, Tuple
-from shared.database import get_db_cursor, execute_query, execute_query_one, get_db_connection
-from shared.response_utils import (
+from database import get_db_cursor, execute_query, execute_query_one, get_db_connection
+from response_utils import (
     create_success_response, create_created_response, create_error_response,
     create_validation_error_response, create_not_found_response,
     parse_request_body, get_path_parameters, get_query_parameters,
     handle_error
 )
-from shared.auth_utils import extract_user_from_cognito_event
-from shared.authorization_utils import validate_api_access, AuthorizationError
+from auth_utils import extract_user_from_cognito_event
+from authorization_utils import validate_api_access, AuthorizationError
 
 logger = logging.getLogger(__name__)
 

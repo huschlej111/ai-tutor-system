@@ -16,7 +16,7 @@ sys.path.append('/opt/python')
 import boto3
 from response_utils import create_response, handle_error
 from auth_utils import extract_user_from_cognito_event
-from shared.db_proxy_client import DBProxyClient
+from db_proxy_client import DBProxyClient
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
