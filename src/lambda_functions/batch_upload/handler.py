@@ -402,204 +402,170 @@ def handle_process_batch_upload(event: Dict[str, Any], user_id: str) -> Dict[str
 
 def process_batch_upload_transaction(batch_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
     """
-    Process batch upload within a database transaction for atomicity
-    Implements bulk insertion with transaction management, error handling, and partial failure recovery
+    Process batch upload using DB Proxy
+    Note: DB Proxy doesn't support explicit transactions, so each operation is atomic.
     Requirements: 8.4
     """
     try:
-        with get_db_connection() as connection:
-            cursor = connection.cursor()
-            
-            # Start transaction
-            cursor.execute("BEGIN")
-            
-            domains_created = 0
-            terms_created = 0
-            domains_skipped = 0
-            processing_summary = []
-            failed_domains = []
-            
-            # Process each domain in the batch
-            for domain_index, domain in enumerate(batch_data.get('domains', [])):
-                try:
-                    domain_data = domain['data']
-                    domain_name = domain_data['name'].strip()
-                    
-                    # Check if domain already exists (duplicate detection)
-                    cursor.execute(
-                        """
-                        SELECT id FROM tree_nodes 
-                        WHERE user_id = %s AND node_type = 'domain' 
-                        AND data->>'name' = %s
-                        """,
-                        (user_id, domain_name)
-                    )
-                    
-                    existing_domain = cursor.fetchone()
-                    if existing_domain:
-                        domains_skipped += 1
-                        processing_summary.append(f"Skipped existing domain: {domain_name}")
-                        continue
-                    
-                    # Validate domain data before insertion
-                    if not domain_name or len(domain_name.strip()) < 2:
-                        raise ValueError(f"Invalid domain name: '{domain_name}'")
-                    
-                    if not domain_data.get('description') or len(domain_data['description'].strip()) < 10:
-                        raise ValueError(f"Invalid domain description for '{domain_name}'")
-                    
-                    # Create domain with comprehensive data preservation
-                    domain_id = str(uuid.uuid4())
-                    domain_payload = {
-                        'name': domain_name,
-                        'description': domain_data['description'].strip(),
-                        'created_by': user_id
-                    }
-                    
-                    # Preserve all optional domain fields
-                    optional_fields = ['subject', 'difficulty', 'estimated_hours', 'prerequisites']
-                    for field in optional_fields:
-                        if field in domain_data:
-                            domain_payload[field] = domain_data[field]
-                    
-                    # Preserve domain metadata and add system metadata
-                    domain_metadata = {'term_count': 0}
-                    if 'metadata' in domain:
-                        # Merge original metadata with system metadata
-                        original_metadata = domain['metadata']
-                        if isinstance(original_metadata, dict):
-                            domain_metadata.update(original_metadata)
-                    
-                    # Insert domain
-                    cursor.execute(
-                        """
-                        INSERT INTO tree_nodes (id, user_id, node_type, data, metadata)
-                        VALUES (%s, %s, 'domain', %s, %s)
-                        """,
-                        (domain_id, user_id, json.dumps(domain_payload), json.dumps(domain_metadata))
-                    )
-                    
-                    domains_created += 1
-                    domain_terms_created = 0
-                    
-                    # Process terms for this domain with bulk insertion optimization
-                    terms_to_insert = []
-                    for term_index, term in enumerate(domain.get('terms', [])):
-                        try:
-                            term_data = term['data']
-                            term_name = term_data['term'].strip()
-                            term_definition = term_data['definition'].strip()
-                            
-                            # Validate term data
-                            if not term_name or len(term_name) < 2:
-                                raise ValueError(f"Invalid term name: '{term_name}' in domain '{domain_name}'")
-                            
-                            if not term_definition or len(term_definition) < 10:
-                                raise ValueError(f"Invalid term definition for '{term_name}' in domain '{domain_name}'")
-                            
-                            term_id = str(uuid.uuid4())
-                            
-                            # Preserve all term data fields
-                            term_payload = {
-                                'term': term_name,
-                                'definition': term_definition
-                            }
-                            
-                            # Add optional term fields if present
-                            optional_term_fields = ['difficulty', 'module', 'examples', 'code_example']
-                            for field in optional_term_fields:
-                                if field in term_data:
-                                    term_payload[field] = term_data[field]
-                            
-                            # Preserve term metadata
-                            term_metadata = {}
-                            if 'metadata' in term:
-                                term_metadata = term['metadata']
-                            
-                            terms_to_insert.append((
-                                term_id, domain_id, user_id, 
-                                json.dumps(term_payload), 
-                                json.dumps(term_metadata)
-                            ))
-                            
-                            domain_terms_created += 1
-                            terms_created += 1
-                            
-                        except Exception as term_error:
-                            logger.error(f"Error processing term {term_index} in domain '{domain_name}': {str(term_error)}")
-                            raise ValueError(f"Failed to process term in domain '{domain_name}': {str(term_error)}")
-                    
-                    # Bulk insert terms for better performance
-                    if terms_to_insert:
-                        cursor.executemany(
+        domains_created = 0
+        terms_created = 0
+        domains_skipped = 0
+        processing_summary = []
+        failed_domains = []
+        
+        # Process each domain in the batch
+        for domain_index, domain in enumerate(batch_data.get('domains', [])):
+            try:
+                domain_data = domain['data']
+                domain_name = domain_data['name'].strip()
+                
+                # Check if domain already exists
+                existing_domain = db_proxy.execute_query(
+                    """
+                    SELECT id FROM tree_nodes 
+                    WHERE user_id = %s AND node_type = 'domain' 
+                    AND data->>'name' = %s
+                    """,
+                    params=[user_id, domain_name],
+                    return_dict=True
+                )
+                
+                if existing_domain and len(existing_domain) > 0:
+                    domains_skipped += 1
+                    processing_summary.append(f"Skipped existing domain: {domain_name}")
+                    continue
+                
+                # Validate domain data
+                if not domain_name or len(domain_name.strip()) < 2:
+                    raise ValueError(f"Invalid domain name: '{domain_name}'")
+                
+                if not domain_data.get('description') or len(domain_data['description'].strip()) < 10:
+                    raise ValueError(f"Invalid domain description for '{domain_name}'")
+                
+                # Create domain
+                domain_id = str(uuid.uuid4())
+                domain_payload = {
+                    'name': domain_name,
+                    'description': domain_data['description'].strip(),
+                    'created_by': user_id
+                }
+                
+                # Preserve optional domain fields
+                optional_fields = ['subject', 'difficulty', 'estimated_hours', 'prerequisites']
+                for field in optional_fields:
+                    if field in domain_data:
+                        domain_payload[field] = domain_data[field]
+                
+                # Preserve domain metadata
+                domain_metadata = {'term_count': 0}
+                if 'metadata' in domain and isinstance(domain['metadata'], dict):
+                    domain_metadata.update(domain['metadata'])
+                
+                # Insert domain
+                db_proxy.execute_query(
+                    """
+                    INSERT INTO tree_nodes (id, user_id, node_type, data, metadata)
+                    VALUES (%s, %s, 'domain', %s, %s)
+                    """,
+                    params=[domain_id, user_id, json.dumps(domain_payload), json.dumps(domain_metadata)]
+                )
+                
+                domains_created += 1
+                domain_terms_created = 0
+                
+                # Process terms for this domain
+                for term_index, term in enumerate(domain.get('terms', [])):
+                    try:
+                        term_data = term['data']
+                        term_name = term_data['term'].strip()
+                        term_definition = term_data['definition'].strip()
+                        
+                        # Validate term data
+                        if not term_name or len(term_name) < 2:
+                            raise ValueError(f"Invalid term name: '{term_name}' in domain '{domain_name}'")
+                        
+                        if not term_definition or len(term_definition) < 10:
+                            raise ValueError(f"Invalid term definition for '{term_name}' in domain '{domain_name}'")
+                        
+                        term_id = str(uuid.uuid4())
+                        
+                        # Build term payload
+                        term_payload = {
+                            'term': term_name,
+                            'definition': term_definition
+                        }
+                        
+                        # Add optional term fields
+                        optional_term_fields = ['difficulty', 'module', 'examples', 'code_example']
+                        for field in optional_term_fields:
+                            if field in term_data:
+                                term_payload[field] = term_data[field]
+                        
+                        # Preserve term metadata
+                        term_metadata = term.get('metadata', {})
+                        
+                        # Insert term
+                        db_proxy.execute_query(
                             """
                             INSERT INTO tree_nodes (id, parent_id, user_id, node_type, data, metadata)
                             VALUES (%s, %s, %s, 'term', %s, %s)
                             """,
-                            terms_to_insert
+                            params=[term_id, domain_id, user_id, json.dumps(term_payload), json.dumps(term_metadata)]
                         )
-                    
-                    # Update domain term count with accurate count
-                    cursor.execute(
-                        """
-                        UPDATE tree_nodes 
-                        SET metadata = jsonb_set(metadata, '{term_count}', %s::jsonb),
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = %s
-                        """,
-                        (json.dumps(domain_terms_created), domain_id)
-                    )
-                    
-                    processing_summary.append(f"Created domain '{domain_name}' with {domain_terms_created} terms")
-                    
-                except Exception as domain_error:
-                    error_msg = f"Error processing domain {domain_index + 1} '{domain.get('data', {}).get('name', 'unknown')}': {str(domain_error)}"
-                    logger.error(error_msg)
-                    failed_domains.append({
-                        'domain_index': domain_index,
-                        'domain_name': domain.get('data', {}).get('name', 'unknown'),
-                        'error': str(domain_error)
-                    })
-                    
-                    # For partial failure recovery, we could continue with other domains
-                    # But for data integrity, we'll rollback the entire transaction
-                    cursor.execute("ROLLBACK")
-                    cursor.close()
-                    return {
-                        'success': False,
-                        'error': error_msg,
-                        'failed_domains': failed_domains,
-                        'domains_processed': domain_index + 1,
-                        'domains_created_before_failure': domains_created,
-                        'terms_created_before_failure': terms_created
-                    }
-            
-            # Commit the entire transaction
-            cursor.execute("COMMIT")
-            cursor.close()
-            
-            # Record successful completion
-            logger.info(f"Batch upload completed successfully: {domains_created} domains, {terms_created} terms created")
-            
-            return {
-                'success': True,
-                'domains_created': domains_created,
-                'terms_created': terms_created,
-                'domains_skipped': domains_skipped,
-                'summary': processing_summary,
-                'total_processed': len(batch_data.get('domains', []))
-            }
+                        
+                        domain_terms_created += 1
+                        terms_created += 1
+                        
+                    except Exception as term_error:
+                        logger.error(f"Error processing term {term_index} in domain '{domain_name}': {str(term_error)}")
+                        raise ValueError(f"Failed to process term in domain '{domain_name}': {str(term_error)}")
+                
+                # Update domain term count
+                db_proxy.execute_query(
+                    """
+                    UPDATE tree_nodes 
+                    SET metadata = jsonb_set(metadata, '{term_count}', %s::jsonb),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    params=[json.dumps(domain_terms_created), domain_id]
+                )
+                
+                processing_summary.append(f"Created domain '{domain_name}' with {domain_terms_created} terms")
+                
+            except Exception as domain_error:
+                error_msg = f"Error processing domain {domain_index + 1} '{domain.get('data', {}).get('name', 'unknown')}': {str(domain_error)}"
+                logger.error(error_msg)
+                failed_domains.append({
+                    'domain_index': domain_index,
+                    'domain_name': domain.get('data', {}).get('name', 'unknown'),
+                    'error': str(domain_error)
+                })
+                # Continue with other domains instead of failing entire batch
+                continue
+        
+        # Return results
+        logger.info(f"Batch upload completed: {domains_created} domains, {terms_created} terms created")
+        
+        return {
+            'success': True,
+            'domains_created': domains_created,
+            'terms_created': terms_created,
+            'domains_skipped': domains_skipped,
+            'failed_domains': failed_domains,
+            'summary': processing_summary,
+            'total_processed': len(batch_data.get('domains', []))
+        }
         
     except Exception as e:
         error_msg = f"Database transaction failed: {str(e)}"
-        logger.error(f"Transaction error in batch upload: {error_msg}")
+        logger.error(f"Error in batch upload: {error_msg}")
         
         return {
             'success': False,
             'error': error_msg,
-            'domains_created': 0,
-            'terms_created': 0,
-            'recovery_action': 'Transaction rolled back, no data was committed'
+            'domains_created': domains_created,
+            'terms_created': terms_created
         }
 
 
