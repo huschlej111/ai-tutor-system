@@ -241,12 +241,12 @@ class BackendStack(Stack):
         )
         self.api.add_gateway_response(
             "Default4XX",
-            type=apigateway.ResponseType.DEFAULT_4XX,
+            type=apigateway.ResponseType.DEFAULT_4_XX,
             response_headers=cors_headers
         )
         self.api.add_gateway_response(
             "Default5XX",
-            type=apigateway.ResponseType.DEFAULT_5XX,
+            type=apigateway.ResponseType.DEFAULT_5_XX,
             response_headers=cors_headers
         )
         
