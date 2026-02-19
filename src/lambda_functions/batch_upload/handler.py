@@ -74,32 +74,45 @@ def handle_validate_batch_upload(event: Dict[str, Any], user_id: str) -> Dict[st
     Requirements: 8.3
     """
     try:
+        logger.info("Parsing request body...")
         body = parse_request_body(event)
+        logger.info(f"Body keys: {list(body.keys())}")
         
         if 'batch_data' not in body:
+            logger.warning("Missing batch_data in request body")
             return create_validation_error_response({
                 'batch_data': 'Batch data is required'
             })
         
         batch_data = body['batch_data']
+        logger.info(f"Batch data keys: {list(batch_data.keys())}")
+        logger.info(f"Number of domains: {len(batch_data.get('domains', []))}")
         
         # Validate JSON structure
+        logger.info("Validating batch structure...")
         validation_result = validate_batch_structure(batch_data)
         if not validation_result['valid']:
+            logger.warning(f"Batch structure validation failed: {validation_result['errors']}")
             return create_validation_error_response(validation_result['errors'])
         
         # Validate domains and terms
+        logger.info("Validating domains and terms...")
         domain_validation = validate_domains_and_terms(batch_data.get('domains', []))
         if not domain_validation['valid']:
+            logger.warning(f"Domain validation failed: {domain_validation['errors']}")
             return create_validation_error_response(domain_validation['errors'])
         
         # Check for duplicates within batch
+        logger.info("Checking for duplicates within batch...")
         duplicate_validation = validate_no_duplicates_in_batch(batch_data.get('domains', []))
         if not duplicate_validation['valid']:
+            logger.warning(f"Duplicate validation failed: {duplicate_validation['errors']}")
             return create_validation_error_response(duplicate_validation['errors'])
         
         # Check for duplicates with existing user data
+        logger.info("Checking for existing duplicates...")
         existing_duplicates = check_existing_duplicates(batch_data.get('domains', []), user_id)
+        logger.info(f"Found {len(existing_duplicates)} existing duplicates")
         
         validation_summary = {
             'valid': True,
@@ -114,10 +127,11 @@ def handle_validate_batch_upload(event: Dict[str, Any], user_id: str) -> Dict[st
                 f"Found {len(existing_duplicates)} domains that already exist and will be skipped"
             )
         
+        logger.info(f"Validation successful: {validation_summary}")
         return create_success_response(validation_summary, 'Batch upload validation completed')
         
     except Exception as e:
-        logger.error(f"Error validating batch upload: {str(e)}")
+        logger.error(f"Error validating batch upload: {str(e)}", exc_info=True)
         return handle_error(e)
 
 
