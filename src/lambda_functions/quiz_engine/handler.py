@@ -113,7 +113,7 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         
         # Validate domain exists and belongs to user or is public
         domain_query = """
-            SELECT id, data->>'name' as name, user_id
+            SELECT id, data->>'name' as name, user_id, is_public
             FROM tree_nodes 
             WHERE id = %s AND node_type = 'domain'
         """
@@ -123,11 +123,10 @@ def handle_start_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             return create_response(404, {'error': 'Domain not found'})
         
         domain_user_id = domain_result['user_id']
+        is_public = domain_result.get('is_public', False)
         
         # Check if user has access to this domain (owner or public domain)
-        if domain_user_id != user_id:
-            # For now, only allow access to own domains
-            # TODO: Implement public domain sharing
+        if domain_user_id != user_id and not is_public:
             return create_response(403, {'error': 'Access denied to this domain'})
         
         # Get all terms in the domain
@@ -398,7 +397,7 @@ def handle_restart_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         
         # Validate domain exists and user has access
         domain_query = """
-            SELECT id, data->>'name' as name, user_id
+            SELECT id, data->>'name' as name, user_id, is_public
             FROM tree_nodes 
             WHERE id = %s AND node_type = 'domain'
         """
@@ -408,9 +407,10 @@ def handle_restart_quiz(event: Dict[str, Any], user_id: str) -> Dict[str, Any]:
             return create_response(404, {'error': 'Domain not found'})
         
         domain_user_id = domain_result['user_id']
+        is_public = domain_result.get('is_public', False)
         
-        # Check if user has access to this domain
-        if domain_user_id != user_id:
+        # Check if user has access to this domain (owner or public)
+        if domain_user_id != user_id and not is_public:
             return create_response(403, {'error': 'Access denied to this domain'})
         
         # Mark any existing active or paused sessions as abandoned

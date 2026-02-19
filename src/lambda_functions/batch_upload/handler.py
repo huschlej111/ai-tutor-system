@@ -461,11 +461,11 @@ def process_batch_upload_transaction(batch_data: Dict[str, Any], user_id: str) -
                 if 'metadata' in domain and isinstance(domain['metadata'], dict):
                     domain_metadata.update(domain['metadata'])
                 
-                # Insert domain
+                # Insert domain (mark as public for batch uploads)
                 db_proxy.execute_query(
                     """
-                    INSERT INTO tree_nodes (id, user_id, node_type, data, metadata)
-                    VALUES (%s, %s, 'domain', %s, %s)
+                    INSERT INTO tree_nodes (id, user_id, node_type, data, metadata, is_public)
+                    VALUES (%s, %s, 'domain', %s, %s, true)
                     """,
                     params=[domain_id, user_id, json.dumps(domain_payload), json.dumps(domain_metadata)]
                 )

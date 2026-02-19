@@ -101,7 +101,8 @@ def handle_create_domain(event, user_id):
         existing = db_proxy.execute_query(
             """
             SELECT id FROM tree_nodes 
-            WHERE user_id = %s AND node_type = 'domain' 
+            WHERE (user_id = %s OR is_public = true) 
+            AND node_type = 'domain' 
             AND data->>'name' = %s
             """,
             params=[user_id, name],
@@ -162,7 +163,7 @@ def handle_get_domains(user_id):
                 COUNT(t.id) as term_count
             FROM tree_nodes d
             LEFT JOIN tree_nodes t ON t.parent_id = d.id AND t.node_type = 'term'
-            WHERE d.user_id = %s AND d.node_type = 'domain'
+            WHERE (d.user_id = %s OR d.is_public = true) AND d.node_type = 'domain'
             GROUP BY d.id, d.data, d.metadata, d.created_at, d.updated_at
             ORDER BY d.created_at DESC
             """,
@@ -210,7 +211,7 @@ def handle_get_domain(event, user_id):
                 COUNT(t.id) as term_count
             FROM tree_nodes d
             LEFT JOIN tree_nodes t ON t.parent_id = d.id AND t.node_type = 'term'
-            WHERE d.id = %s AND d.user_id = %s AND d.node_type = 'domain'
+            WHERE d.id = %s AND (d.user_id = %s OR d.is_public = true) AND d.node_type = 'domain'
             GROUP BY d.id, d.data, d.metadata, d.created_at, d.updated_at
             """,
             params=[domain_id, user_id],
