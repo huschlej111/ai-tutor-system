@@ -423,62 +423,86 @@ def process_batch_upload_transaction(batch_data: Dict[str, Any], user_id: str) -
                 existing_domain = db_proxy.execute_query(
                     """
                     SELECT id FROM tree_nodes 
-                    WHERE user_id = %s AND node_type = 'domain' 
+                    WHERE (user_id = %s OR is_public = true) AND node_type = 'domain' 
                     AND data->>'name' = %s
                     """,
                     params=[user_id, domain_name],
                     return_dict=True
                 )
                 
+                # Determine if creating new domain or merging terms
                 if existing_domain and len(existing_domain) > 0:
+                    # Domain exists - merge terms
+                    domain_id = existing_domain[0]['id']
                     domains_skipped += 1
-                    processing_summary.append(f"Skipped existing domain: {domain_name}")
-                    continue
+                    
+                    # Get existing terms for this domain
+                    existing_terms = db_proxy.execute_query(
+                        """
+                        SELECT data->>'term' as term_name
+                        FROM tree_nodes
+                        WHERE parent_id = %s AND node_type = 'term'
+                        """,
+                        params=[domain_id],
+                        return_dict=True
+                    )
+                    existing_term_names = {t['term_name'].lower() for t in existing_terms}
+                    
+                    domain_terms_created = 0
+                    terms_skipped = 0
+                    
+                else:
+                    # New domain - validate and create
+                    if not domain_name or len(domain_name.strip()) < 2:
+                        raise ValueError(f"Invalid domain name: '{domain_name}'")
+                    
+                    if not domain_data.get('description') or len(domain_data['description'].strip()) < 10:
+                        raise ValueError(f"Invalid domain description for '{domain_name}'")
+                    
+                    # Create domain
+                    domain_id = str(uuid.uuid4())
+                    domain_payload = {
+                        'name': domain_name,
+                        'description': domain_data['description'].strip(),
+                        'created_by': user_id
+                    }
+                    
+                    # Preserve optional domain fields
+                    optional_fields = ['subject', 'difficulty', 'estimated_hours', 'prerequisites']
+                    for field in optional_fields:
+                        if field in domain_data:
+                            domain_payload[field] = domain_data[field]
+                    
+                    # Preserve domain metadata
+                    domain_metadata = {'term_count': 0}
+                    if 'metadata' in domain and isinstance(domain['metadata'], dict):
+                        domain_metadata.update(domain['metadata'])
+                    
+                    # Insert domain (mark as public for batch uploads)
+                    db_proxy.execute_query(
+                        """
+                        INSERT INTO tree_nodes (id, user_id, node_type, data, metadata, is_public)
+                        VALUES (%s, %s, 'domain', %s, %s, true)
+                        """,
+                        params=[domain_id, user_id, json.dumps(domain_payload), json.dumps(domain_metadata)]
+                    )
+                    
+                    domains_created += 1
+                    domain_terms_created = 0
+                    terms_skipped = 0
+                    existing_term_names = set()
                 
-                # Validate domain data
-                if not domain_name or len(domain_name.strip()) < 2:
-                    raise ValueError(f"Invalid domain name: '{domain_name}'")
-                
-                if not domain_data.get('description') or len(domain_data['description'].strip()) < 10:
-                    raise ValueError(f"Invalid domain description for '{domain_name}'")
-                
-                # Create domain
-                domain_id = str(uuid.uuid4())
-                domain_payload = {
-                    'name': domain_name,
-                    'description': domain_data['description'].strip(),
-                    'created_by': user_id
-                }
-                
-                # Preserve optional domain fields
-                optional_fields = ['subject', 'difficulty', 'estimated_hours', 'prerequisites']
-                for field in optional_fields:
-                    if field in domain_data:
-                        domain_payload[field] = domain_data[field]
-                
-                # Preserve domain metadata
-                domain_metadata = {'term_count': 0}
-                if 'metadata' in domain and isinstance(domain['metadata'], dict):
-                    domain_metadata.update(domain['metadata'])
-                
-                # Insert domain (mark as public for batch uploads)
-                db_proxy.execute_query(
-                    """
-                    INSERT INTO tree_nodes (id, user_id, node_type, data, metadata, is_public)
-                    VALUES (%s, %s, 'domain', %s, %s, true)
-                    """,
-                    params=[domain_id, user_id, json.dumps(domain_payload), json.dumps(domain_metadata)]
-                )
-                
-                domains_created += 1
-                domain_terms_created = 0
-                
-                # Process terms for this domain
+                # Process terms for this domain (new or existing)
                 for term_index, term in enumerate(domain.get('terms', [])):
                     try:
                         term_data = term['data']
                         term_name = term_data['term'].strip()
                         term_definition = term_data['definition'].strip()
+                        
+                        # Skip if term already exists in domain
+                        if term_name.lower() in existing_term_names:
+                            terms_skipped += 1
+                            continue
                         
                         # Validate term data
                         if not term_name or len(term_name) < 2:
@@ -521,6 +545,7 @@ def process_batch_upload_transaction(batch_data: Dict[str, Any], user_id: str) -
                         raise ValueError(f"Failed to process term in domain '{domain_name}': {str(term_error)}")
                 
                 # Update domain term count
+                current_term_count = len(existing_term_names) + domain_terms_created
                 db_proxy.execute_query(
                     """
                     UPDATE tree_nodes 
@@ -528,10 +553,17 @@ def process_batch_upload_transaction(batch_data: Dict[str, Any], user_id: str) -
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                     """,
-                    params=[json.dumps(domain_terms_created), domain_id]
+                    params=[json.dumps(current_term_count), domain_id]
                 )
                 
-                processing_summary.append(f"Created domain '{domain_name}' with {domain_terms_created} terms")
+                # Create summary message
+                if domain_id in [d['id'] for d in existing_domain] if existing_domain else []:
+                    processing_summary.append(
+                        f"Merged into existing domain '{domain_name}': "
+                        f"{domain_terms_created} new terms added, {terms_skipped} duplicates skipped"
+                    )
+                else:
+                    processing_summary.append(f"Created domain '{domain_name}' with {domain_terms_created} terms")
                 
             except Exception as domain_error:
                 error_msg = f"Error processing domain {domain_index + 1} '{domain.get('data', {}).get('name', 'unknown')}': {str(domain_error)}"
