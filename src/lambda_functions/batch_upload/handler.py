@@ -34,14 +34,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Main handler for batch upload operations with role-based authorization
     """
+    logger.info(f"Batch upload handler invoked: {event.get('httpMethod')} {event.get('path')}")
+    
     try:
         http_method = event.get('httpMethod')
         path = event.get('path', '')
         
+        logger.info(f"Validating authorization for user...")
+        
         # Validate authorization for batch upload operations (requires instructor or admin)
         try:
             user_info = validate_api_access(event, ['batch_upload'])
+            logger.info(f"Authorization successful for user: {user_info.get('user_id')}")
         except AuthorizationError as e:
+            logger.error(f"Authorization failed: {str(e)}")
             return create_error_response(403, str(e))
         
         user_id = user_info['user_id']
@@ -58,7 +64,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return create_error_response(404, 'Endpoint not found')
         
     except Exception as e:
-        logger.error(f"Batch upload error: {str(e)}")
+        logger.error(f"Batch upload error: {str(e)}", exc_info=True)
         return handle_error(e)
 
 
