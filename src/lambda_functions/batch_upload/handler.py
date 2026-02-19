@@ -146,20 +146,13 @@ def validate_batch_structure(batch_data: Dict[str, Any]) -> Dict[str, Any]:
         errors['batch_data'] = 'Batch data must be a JSON object'
         return {'valid': False, 'errors': errors}
     
-    # Validate batch_metadata
-    if 'batch_metadata' not in batch_data:
-        errors['batch_metadata'] = 'batch_metadata is required'
-    else:
+    # Validate batch_metadata (optional)
+    if 'batch_metadata' in batch_data:
         metadata = batch_data['batch_metadata']
         if not isinstance(metadata, dict):
             errors['batch_metadata'] = 'batch_metadata must be an object'
         else:
-            required_metadata_fields = ['filename', 'version', 'created_date', 'total_domains', 'total_terms']
-            for field in required_metadata_fields:
-                if field not in metadata:
-                    errors[f'batch_metadata.{field}'] = f'{field} is required in batch_metadata'
-            
-            # Validate metadata types
+            # Validate metadata types if present
             if 'total_domains' in metadata and not isinstance(metadata['total_domains'], int):
                 errors['batch_metadata.total_domains'] = 'total_domains must be an integer'
             if 'total_terms' in metadata and not isinstance(metadata['total_terms'], int):
