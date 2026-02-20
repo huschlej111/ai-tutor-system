@@ -88,6 +88,75 @@ class BackendStack(Stack):
         )
         self.db_credentials.grant_read(self.db_proxy_lambda)
         
+        # Create Migration Runner Lambda (inside VPC)
+        self.migration_runner_lambda = _lambda.Function(
+            self,
+            "MigrationRunnerFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=_lambda.Code.from_asset(
+                "../src/lambda_functions/migration_runner",
+                bundling=cdk.BundlingOptions(
+                    image=_lambda.Runtime.PYTHON_3_12.bundling_image,
+                    command=[
+                        "bash", "-c",
+                        "pip install -r requirements.txt -t /asset-output && "
+                        "cp -r . /asset-output && "
+                        "mkdir -p /asset-output/opt/migrations && "
+                        "cp -r /asset-input/../../database/migrations/*.sql /asset-output/opt/migrations/ || true"
+                    ]
+                )
+            ),
+            timeout=Duration.seconds(300),  # 5 minutes for migrations
+            memory_size=512,
+            layers=[self.shared_layer],
+            vpc=self.vpc,
+            vpc_subnets=ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
+            ),
+            security_groups=[self.lambda_security_group],
+            environment={
+                "DB_SECRET_ARN": self.db_credentials.secret_arn,
+                "DB_NAME": "tutor_system",
+                "MIGRATIONS_DIR": "/opt/migrations"
+            },
+            description="Database migration runner - applies schema migrations"
+        )
+        self.db_credentials.grant_read(self.migration_runner_lambda)
+        
+        # Run migrations on deployment using Custom Resource
+        migration_trigger = cr.AwsCustomResource(
+            self,
+            "MigrationTrigger",
+            on_create=cr.AwsSdkCall(
+                service="Lambda",
+                action="invoke",
+                parameters={
+                    "FunctionName": self.migration_runner_lambda.function_name,
+                    "Payload": json.dumps({"action": "migrate"})
+                },
+                physical_resource_id=cr.PhysicalResourceId.of("MigrationTrigger")
+            ),
+            on_update=cr.AwsSdkCall(
+                service="Lambda",
+                action="invoke",
+                parameters={
+                    "FunctionName": self.migration_runner_lambda.function_name,
+                    "Payload": json.dumps({"action": "migrate"})
+                },
+                physical_resource_id=cr.PhysicalResourceId.of("MigrationTrigger")
+            ),
+            policy=cr.AwsCustomResourcePolicy.from_statements([
+                iam.PolicyStatement(
+                    actions=["lambda:InvokeFunction"],
+                    resources=[self.migration_runner_lambda.function_arn]
+                )
+            ])
+        )
+        
+        # Ensure migrations run before other Lambdas are created
+        migration_trigger.node.add_dependency(self.migration_runner_lambda)
+        
         # Create Auth Lambda (outside VPC)
         self.auth_lambda = _lambda.Function(
             self,
@@ -513,4 +582,11 @@ def handler(event, context):
             "AnswerEvaluatorFunctionName",
             value=self.answer_evaluator_lambda.function_name,
             description="Answer Evaluator Lambda function name"
+        )
+        
+        CfnOutput(
+            self,
+            "MigrationRunnerFunctionName",
+            value=self.migration_runner_lambda.function_name,
+            description="Migration Runner Lambda function name"
         )
