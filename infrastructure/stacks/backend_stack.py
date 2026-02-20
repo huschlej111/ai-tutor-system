@@ -101,9 +101,9 @@ class BackendStack(Stack):
                     command=[
                         "bash", "-c",
                         "pip install -r requirements.txt -t /asset-output && "
-                        "cp -r . /asset-output && "
+                        "cp handler.py /asset-output/ && "
                         "mkdir -p /asset-output/opt/migrations && "
-                        "cp -r /asset-input/../../database/migrations/*.sql /asset-output/opt/migrations/ || true"
+                        "cp migrations/*.sql /asset-output/opt/migrations/ 2>/dev/null || true"
                     ]
                 )
             ),
