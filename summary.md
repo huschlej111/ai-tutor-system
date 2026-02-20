@@ -71,7 +71,14 @@
 **Iteration 5:** Increased definition length limit
 - Changed from 1000 to 5000 characters
 - Python documentation is verbose
-- Commit: Latest (pushed 18:42)
+- Commit: `f15eac2`
+- Result: Still 400 - term 38 has 8373 chars
+
+**Iteration 6:** Increased definition length limit again
+- Changed from 5000 to 10000 characters
+- Python's `open()` function has 8373-char definition
+- Only 1 term out of 55 exceeds 5000 chars
+- Commit: `71f50d3` (pushed 19:28)
 - Result: Awaiting deployment test
 
 **Documentation:** Created `batch_upload_bug.md` with complete debugging timeline
