@@ -517,7 +517,6 @@ def handler(event, context):
         )
         
         # Create custom resource
-        from aws_cdk import custom_resources as cr
         cr.AwsCustomResource(
             self,
             "UpdateUserPoolTrigger",
