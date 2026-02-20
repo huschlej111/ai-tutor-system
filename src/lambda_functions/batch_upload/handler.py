@@ -50,7 +50,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             logger.error(f"Authorization failed: {str(e)}")
             return create_error_response(403, str(e))
         
-        user_id = user_info['user_id']
+        cognito_sub = user_info['user_id']
+        
+        # Look up database user ID from cognito_sub
+        user_query = "SELECT id FROM users WHERE cognito_sub = %s;"
+        user_result = invoke_db_proxy('execute_query_one', user_query, [cognito_sub])
+        
+        if not user_result or not user_result.get('result'):
+            logger.error(f"User not found in database for cognito_sub: {cognito_sub}")
+            return create_error_response(404, "User not found in database")
+        
+        user_id = user_result['result'][0]
+        logger.info(f"Resolved database user_id: {user_id}")
         
         if http_method == 'POST':
             if path.endswith('/validate'):
