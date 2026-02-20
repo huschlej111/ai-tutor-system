@@ -324,3 +324,12 @@ test_simple_lambda.py
 # Lock files
 .~lock.*
 *.lock#kiro-specs
+
+# Temporary test files
+*.b64
+test-*.json
+quiz-start-result*.json
+ml_model_layer.zip
+layer/
+lambda-model-separation
+refactor_tests.py
