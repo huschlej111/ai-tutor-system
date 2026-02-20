@@ -281,10 +281,20 @@ This task list implements the infrastructure modernization project as specified 
 - [x] Use CloudFormation rollback commands
 - [x] Add notification on rollback
 - [x] Document rollback procedure
+- [ ] **Add database migration rollback support**
+  - [ ] Create "down" migration files for each migration
+  - [ ] Update migration runner to support rollback action
+  - [ ] Add rollback validation (check dependencies)
+  - [ ] Add rollback dry-run mode
+  - [ ] Test rollback on non-production database
+  - [ ] Document rollback procedures in `database/migrations/README.md`
+  - [ ] Add rollback to CI/CD workflow (manual trigger)
 
 **Implementation:** Manual workflow at `.github/workflows/rollback.yml`. Trigger from GitHub Actions tab → Rollback Deployment → Select stack.
 
 **Usage:** Go to Actions → Rollback Deployment → Run workflow → Choose stack
+
+**Database Rollback Status:** Basic migration system implemented. Rollback requires manual SQL execution. Automated rollback deferred to this task.
 
 **Validates:** FR-2.4
 
@@ -560,6 +570,170 @@ The following functions are referenced in tests but not implemented in `src/lamb
 - **Developer Time Saved:** 2-3 hours/week
 - **Incident Response Time:** < 15 minutes (from 1 hour)
 
+
+---
+
+## Future Enhancement: Database Migration Rollback
+
+### Overview
+The current migration system (implemented 2026-02-19) supports forward migrations only. This section outlines the work needed to add automated rollback capability.
+
+### Current State
+- ✅ Migration runner Lambda applies pending migrations
+- ✅ Migrations tracked in `schema_migrations` table
+- ✅ Migrations embedded in Lambda package
+- ✅ Auto-run on deployment via CloudFormation Custom Resource
+- ❌ No automated rollback support (manual SQL required)
+
+### Task: Implement Migration Rollback
+
+**Estimated Effort:** 4-6 hours
+
+#### Subtasks:
+
+1. **Create "Down" Migration Files** (1-2 hours)
+   - [ ] For each existing migration, create corresponding `.down.sql` file
+   - [ ] Example: `003_add_public_domains.sql` → `003_add_public_domains.down.sql`
+   - [ ] Down migrations should reverse the up migration:
+     ```sql
+     -- 003_add_public_domains.down.sql
+     DROP INDEX IF EXISTS idx_tree_nodes_domain_access;
+     DROP INDEX IF EXISTS idx_tree_nodes_public;
+     ALTER TABLE tree_nodes DROP COLUMN IF EXISTS is_public;
+     ```
+   - [ ] Test each down migration on a copy of the database
+   - [ ] Document which migrations are safe to rollback vs. destructive
+
+2. **Update Migration Runner Lambda** (2-3 hours)
+   - [ ] Add `rollback` action to handler
+   - [ ] Accept parameters: `{"action": "rollback", "target_version": "002"}`
+   - [ ] Implement rollback logic:
+     - Get migrations applied after target version
+     - Apply down migrations in reverse order
+     - Update `schema_migrations` table (mark as rolled back)
+   - [ ] Add validation: check for data loss risk
+   - [ ] Add dry-run mode for rollback
+   - [ ] Update Lambda bundling to include `.down.sql` files
+
+3. **Add Rollback Validation** (1 hour)
+   - [ ] Check for foreign key constraints
+   - [ ] Warn if rollback would drop tables with data
+   - [ ] Require confirmation flag for destructive rollbacks
+   - [ ] Add rollback dependency checking (can't rollback if later migrations depend on it)
+
+4. **Update CI/CD Workflow** (30 min)
+   - [ ] Add manual workflow: `rollback-migration.yml`
+   - [ ] Inputs: target version, confirmation flag
+   - [ ] Invoke migration runner with rollback action
+   - [ ] Add notification on rollback completion
+
+5. **Documentation** (30 min)
+   - [ ] Update `database/migrations/README.md` with rollback procedures
+   - [ ] Document safe vs. unsafe rollbacks
+   - [ ] Add examples of common rollback scenarios
+   - [ ] Document emergency rollback procedures
+
+6. **Testing** (1 hour)
+   - [ ] Test rollback on local database
+   - [ ] Test rollback dry-run
+   - [ ] Test rollback validation (should prevent unsafe rollbacks)
+   - [ ] Test rollback of multiple migrations
+   - [ ] Test rollback then re-apply (should work)
+
+### Example Implementation
+
+**Down Migration File:**
+```sql
+-- database/migrations/003_add_public_domains.down.sql
+-- Rollback: Remove public domain support
+
+-- Drop indexes
+DROP INDEX IF EXISTS idx_tree_nodes_domain_access;
+DROP INDEX IF EXISTS idx_tree_nodes_public;
+
+-- Remove column
+ALTER TABLE tree_nodes DROP COLUMN IF EXISTS is_public;
+
+-- Note: This is a safe rollback - no data loss
+-- The column will be recreated if migration is re-applied
+```
+
+**Migration Runner Rollback Logic:**
+```python
+def handle_rollback(target_version: str, confirm_destructive: bool = False):
+    """Rollback migrations to target version"""
+    
+    # Get migrations to rollback (in reverse order)
+    applied = get_applied_migrations()
+    to_rollback = [m for m in applied if m > target_version]
+    to_rollback.sort(reverse=True)
+    
+    # Check for destructive rollbacks
+    for migration in to_rollback:
+        if is_destructive(migration) and not confirm_destructive:
+            raise ValueError(f"Migration {migration} is destructive. Set confirm_destructive=true")
+    
+    # Apply down migrations
+    for version in to_rollback:
+        down_sql = load_down_migration(version)
+        execute_query(down_sql)
+        
+        # Mark as rolled back
+        execute_query(
+            "UPDATE schema_migrations SET success = false WHERE version = %s",
+            (version,)
+        )
+```
+
+**GitHub Actions Workflow:**
+```yaml
+# .github/workflows/rollback-migration.yml
+name: Rollback Database Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target migration version (rollback to this version)'
+        required: true
+        type: string
+      confirm_destructive:
+        description: 'Confirm destructive rollback (drops data)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rollback Migration
+        run: |
+          aws lambda invoke \
+            --function-name BackendStack-dev-MigrationRunnerFunction \
+            --payload '{"action": "rollback", "target_version": "${{ inputs.target_version }}", "confirm_destructive": ${{ inputs.confirm_destructive }}}' \
+            response.json
+          cat response.json
+```
+
+### Rollback Safety Guidelines
+
+**Safe Rollbacks (No Data Loss):**
+- Adding/removing columns (data preserved in other columns)
+- Adding/removing indexes
+- Renaming columns (if data copied first)
+- Adding constraints (if data already complies)
+
+**Unsafe Rollbacks (Data Loss Risk):**
+- Dropping tables
+- Dropping columns with data
+- Changing column types (may lose precision)
+- Removing foreign keys (may leave orphaned data)
+
+**Best Practice:** Always test rollbacks on a database copy before production.
+
+### Priority
+**Medium** - Not critical for current development, but important for production stability. Implement before production rollout or after first production incident requiring rollback.
 
 ---
 
