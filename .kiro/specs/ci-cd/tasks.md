@@ -625,3 +625,47 @@ cdk deploy --all --context stage=prod
 - `Project: ai-tutor-system` - Overall project costs
 
 **Note:** This is intentionally left out of scope for the current project. Focus remains on dev environment stability and CI/CD pipeline maturity.
+
+---
+
+## Deferred Features (Out of Scope)
+
+### Hierarchical Knowledge Organization (Category Support)
+
+**Status:** Deferred for post-CI/CD implementation
+
+**Context:**  
+The database schema supports multi-level hierarchy (i.e. `domain → category → term`), but current implementation only uses 2 levels (`domain → term`). The `py_methods.json` dataset contains complex hierarchical Python knowledge that would benefit from category organization.
+
+**Example Use Case:**
+```
+Domain: Python Built-in Functions
+├── Category: String Methods
+│   ├── Term: str.upper()
+│   ├── Term: str.lower()
+│   └── Term: str.strip()
+├── Category: Numeric Functions
+│   ├── Term: abs()
+│   ├── Term: round()
+│   └── Term: pow()
+└── Category: Iteration Functions
+    ├── Term: all()
+    ├── Term: any()
+    └── Term: enumerate()
+```
+
+**Required Work:**
+1. Add category support to batch upload handler
+2. Update domain management API to handle categories
+3. Update quiz engine to traverse category hierarchy
+4. Update frontend to display/navigate categories
+5. Create conversion script for `py_methods.json` → domain/category/term structure
+6. Update progress tracking to handle category-level progress
+
+**Estimated Effort:** 1-2 weeks
+
+**Decision:** Focus on CI/CD stability and 2-level hierarchy first. Add category support after production rollout when we have real user feedback on navigation needs.
+
+**Related Files:**
+- `/home/jimbob/Dev/AWS_Dev/.kiro/specs/tutor-system/py_methods.json` - Complex dataset awaiting category support
+- `/home/jimbob/Dev/AWS_Dev/.kiro/specs/tutor-system/datamodel.md` - Schema already supports unlimited hierarchy depth
