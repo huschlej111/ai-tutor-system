@@ -395,12 +395,50 @@ class BackendStack(Stack):
         
         # Quiz routes (with authorization)
         quiz_resource = self.api.root.add_resource("quiz")
-        quiz_resource.add_resource("start").add_method(
+        
+        # POST /quiz/start - Start a new quiz session
+        quiz_start = quiz_resource.add_resource("start")
+        quiz_start.add_method(
             "POST",
             apigateway.LambdaIntegration(self.quiz_engine_lambda),
             authorizer=authorizer,
             authorization_type=apigateway.AuthorizationType.COGNITO
         )
+        quiz_start.add_cors_preflight(
+            allow_origins=["https://d3awlgby2429wc.cloudfront.net"],
+            allow_methods=["POST", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization"]
+        )
+        
+        # POST /quiz/answer - Submit answer for current question
+        quiz_answer = quiz_resource.add_resource("answer")
+        quiz_answer.add_method(
+            "POST",
+            apigateway.LambdaIntegration(self.quiz_engine_lambda),
+            authorizer=authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        quiz_answer.add_cors_preflight(
+            allow_origins=["https://d3awlgby2429wc.cloudfront.net"],
+            allow_methods=["POST", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization"]
+        )
+        
+        # GET /quiz/question - Get next question
+        quiz_question = quiz_resource.add_resource("question")
+        quiz_question.add_method(
+            "GET",
+            apigateway.LambdaIntegration(self.quiz_engine_lambda),
+            authorizer=authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO
+        )
+        quiz_question.add_cors_preflight(
+            allow_origins=["https://d3awlgby2429wc.cloudfront.net"],
+            allow_methods=["GET", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization"]
+        )
+        
+        # POST /quiz/evaluate - Direct answer evaluation (for testing)
         quiz_resource.add_resource("evaluate").add_method(
             "POST",
             apigateway.LambdaIntegration(self.answer_evaluator_lambda),
