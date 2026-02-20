@@ -260,8 +260,8 @@ def validate_domains_and_terms(domains: List[Dict[str, Any]]) -> Dict[str, Any]:
                             
                             if 'definition' in term_data:
                                 definition = term_data['definition'].strip()
-                                if len(definition) < 10 or len(definition) > 1000:
-                                    errors[f'{term_prefix}.data.definition'] = 'Definition must be between 10 and 1000 characters'
+                                if len(definition) < 10 or len(definition) > 5000:
+                                    errors[f'{term_prefix}.data.definition'] = 'Definition must be between 10 and 5000 characters'
     
     return {'valid': len(errors) == 0, 'errors': errors}
 
