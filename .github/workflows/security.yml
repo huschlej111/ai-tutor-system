@@ -13,8 +13,6 @@ jobs:
   security-scan:
     name: Security Analysis
     runs-on: ubuntu-latest
-    container:
-      image: python:3.11-slim
     
     permissions:
       contents: read
@@ -30,6 +28,7 @@ jobs:
     - name: Set up Python
       run: |
         python3 --version
+        apt-get update && apt-get install -y python3-pip
         pip3 --version
     
     - name: Install dependencies
