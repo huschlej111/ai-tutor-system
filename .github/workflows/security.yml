@@ -83,50 +83,51 @@ jobs:
         path: security-reports/
         retention-days: 30
     
-    - name: Upload Bandit SARIF
-      uses: github/codeql-action/upload-sarif@v2
-      if: always()
-      with:
-        sarif_file: security-reports/bandit-sarif.json
-      continue-on-error: true
+    # TODO: Re-enable for GitHub - these actions don't work on Gitea
+    # - name: Upload Bandit SARIF
+    #   uses: github/codeql-action/upload-sarif@v2
+    #   if: always()
+    #   with:
+    #     sarif_file: security-reports/bandit-sarif.json
+    #   continue-on-error: true
     
-    - name: Comment PR with Security Summary
-      if: github.event_name == 'pull_request'
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const fs = require('fs');
-          try {
-            const summary = JSON.parse(fs.readFileSync('security-reports/security-summary.json', 'utf8'));
-            
-            let comment = `## 🔒 Security Scan Results\n\n`;
-            comment += `**Overall Status:** ${summary.overall_status === 'PASS' ? '✅ PASS' : '❌ FAIL'}\n`;
-            comment += `**Scan Time:** ${summary.scan_timestamp}\n\n`;
-            
-            comment += `### Tool Results\n`;
-            for (const [tool, result] of Object.entries(summary.tools)) {
-              const status = result.status === 'PASS' ? '✅' : '❌';
-              comment += `- **${tool}:** ${status} ${result.message}\n`;
-            }
-            
-            if (summary.issues_found) {
-              comment += `\n### 📋 Recommendations\n`;
-              for (const rec of summary.recommendations) {
-                comment += `- ${rec}\n`;
-              }
-            }
-            
-            comment += `\n📊 Detailed reports are available in the workflow artifacts.`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
-          } catch (error) {
-            console.log('Could not read security summary:', error.message);
-          }
+    # - name: Comment PR with Security Summary
+    #   if: github.event_name == 'pull_request'
+    #   uses: actions/github-script@v6
+    #   with:
+    #     script: |
+    #       const fs = require('fs');
+    #       try {
+    #         const summary = JSON.parse(fs.readFileSync('security-reports/security-summary.json', 'utf8'));
+    #         
+    #         let comment = `## 🔒 Security Scan Results\n\n`;
+    #         comment += `**Overall Status:** ${summary.overall_status === 'PASS' ? '✅ PASS' : '❌ FAIL'}\n`;
+    #         comment += `**Scan Time:** ${summary.scan_timestamp}\n\n`;
+    #         
+    #         comment += `### Tool Results\n`;
+    #         for (const [tool, result] of Object.entries(summary.tools)) {
+    #           const status = result.status === 'PASS' ? '✅' : '❌';
+    #           comment += `- **${tool}:** ${status} ${result.message}\n`;
+    #         }
+    #         
+    #         if (summary.issues_found) {
+    #           comment += `\n### 📋 Recommendations\n`;
+    #           for (const rec of summary.recommendations) {
+    #             comment += `- ${rec}\n`;
+    #           }
+    #         }
+    #         
+    #         comment += `\n📊 Detailed reports are available in the workflow artifacts.`;
+    #         
+    #         github.rest.issues.createComment({
+    #           issue_number: context.issue.number,
+    #           owner: context.repo.owner,
+    #           repo: context.repo.repo,
+    #           body: comment
+    #         });
+    #       } catch (error) {
+    #         console.log('Could not read security summary:', error.message);
+    #       }
     
     - name: Fail on Security Issues
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
