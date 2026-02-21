@@ -29,10 +29,9 @@ jobs:
         fetch-depth: 0
     
     - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
+      run: |
+        python3 --version
+        pip3 --version
     
     - name: Install Python dependencies
       run: |
@@ -112,10 +111,9 @@ jobs:
       uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
+      run: |
+        python3 --version
+        pip3 --version
     
     - name: Install dependencies
       run: |
@@ -255,10 +253,9 @@ jobs:
       uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
+      run: |
+        python3 --version
+        pip3 --version
     
     - name: Install dependencies
       run: |
@@ -319,155 +316,3 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
     
     - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-    
-    - name: Install CDK
-      run: |
-        npm install -g aws-cdk
-        pip install aws-cdk-lib constructs
-    
-    - name: Install dependencies
-      run: |
-        pip install -r infrastructure/requirements.txt
-    
-    - name: Deploy infrastructure
-      run: |
-        cd infrastructure
-        cdk bootstrap --context environment=development
-        cdk deploy --all --require-approval never --context environment=development
-    
-    - name: Run database migrations
-      run: |
-        aws lambda invoke \
-          --function-name tutor-db-migrate-development \
-          --payload '{}' \
-          /tmp/migration-result.json
-        cat /tmp/migration-result.json
-    
-    - name: Deploy frontend
-      run: |
-        cd frontend
-        npm ci
-        npm run build
-        
-        # Get S3 bucket name from CloudFormation outputs
-        BUCKET_NAME=$(aws cloudformation describe-stacks \
-          --stack-name TutorSystemStack-development \
-          --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
-          --output text)
-        
-        aws s3 sync dist/ s3://$BUCKET_NAME --delete
-
-  # Deploy to production
-  deploy-production:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: [backend-tests, frontend-tests, integration-tests]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
-    environment:
-      name: production
-      url: https://app.know-it-all-tutor.com
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
-        aws-region: ${{ env.AWS_REGION }}
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-    
-    - name: Install CDK
-      run: |
-        npm install -g aws-cdk
-        pip install aws-cdk-lib constructs
-    
-    - name: Install dependencies
-      run: |
-        pip install -r infrastructure/requirements.txt
-    
-    - name: Deploy infrastructure
-      run: |
-        cd infrastructure
-        cdk bootstrap --context environment=production
-        cdk deploy --all --require-approval never --context environment=production
-    
-    - name: Run database migrations
-      run: |
-        aws lambda invoke \
-          --function-name tutor-db-migrate-production \
-          --payload '{}' \
-          /tmp/migration-result.json
-        cat /tmp/migration-result.json
-    
-    - name: Deploy frontend
-      run: |
-        cd frontend
-        npm ci
-        npm run build
-        
-        # Get S3 bucket and CloudFront distribution from CloudFormation outputs
-        BUCKET_NAME=$(aws cloudformation describe-stacks \
-          --stack-name TutorSystemStack-production \
-          --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
-          --output text)
-        
-        DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
-          --stack-name TutorSystemStack-production \
-          --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
-          --output text)
-        
-        # Deploy with cache optimization
-        aws s3 sync dist/ s3://$BUCKET_NAME --delete \
-          --cache-control "public, max-age=31536000, immutable" \
-          --exclude "*.html"
-        
-        aws s3 sync dist/ s3://$BUCKET_NAME --delete \
-          --cache-control "public, max-age=0, must-revalidate" \
-          --include "*.html"
-        
-        # Invalidate CloudFront cache
-        aws cloudfront create-invalidation \
-          --distribution-id $DISTRIBUTION_ID \
-          --paths "/*"
-
-  # Notify deployment status
-  notify:
-    name: Notify Deployment Status
-    runs-on: ubuntu-latest
-    needs: [deploy-development, deploy-production]
-    if: always()
-    
-    steps:
-    - name: Notify success
-      if: needs.deploy-development.result == 'success' || needs.deploy-production.result == 'success'
-      run: |
-        echo "✅ Deployment completed successfully"
-        # Add Slack/Teams notification here if needed
-    
-    - name: Notify failure
-      if: needs.deploy-development.result == 'failure' || needs.deploy-production.result == 'failure'
-      run: |
-        echo "❌ Deployment failed"
-        # Add Slack/Teams notification here if needed
-        exit 1

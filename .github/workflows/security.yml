@@ -26,10 +26,9 @@ jobs:
         fetch-depth: 0  # Full history for TruffleHog
     
     - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-        cache: 'pip'
+      run: |
+        python3 --version
+        pip3 --version
     
     - name: Install dependencies
       run: |
