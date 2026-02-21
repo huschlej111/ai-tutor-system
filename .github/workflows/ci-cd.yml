@@ -131,7 +131,8 @@ jobs:
     - name: Run database migrations
       run: |
         export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
-        python scripts/setup_local_database.py
+        # Apply schema directly (service container already has database)
+        PGPASSWORD=testpassword psql -h localhost -U testuser -d tutor_system_test -f scripts/sql/schema_v2.sql
     
     - name: Run Python tests
       run: |
