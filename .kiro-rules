@@ -1,0 +1,5 @@
+# CI/CD Constraints
+- NEVER perform manual deployments (e.g., direct 'aws' commands or 'npm run deploy') without getting explicit permission.
+- ALL changes must follow the Git-flow: Branch -> Commit -> Push -> PR.
+- Do not bypass the GitHub Actions/CI pipeline even if it is "easier."
+- If you lack permissions to push, ask for a PR review instead of manual intervention.
