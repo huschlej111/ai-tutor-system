@@ -74,6 +74,9 @@ jobs:
       continue-on-error: true
     
     - name: Upload Security Reports
+      # Note: actions/upload-artifact@v4 not supported in Gitea Actions
+      # Reports are generated in security-reports/ directory
+      if: false  # Disabled for Gitea compatibility
       uses: actions/upload-artifact@v4
       if: always()
       with:
