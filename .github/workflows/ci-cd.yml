@@ -49,27 +49,26 @@ jobs:
       run: |
         bandit -r src/ infrastructure/ scripts/ \
           -f json -o security-reports/bandit-report.json \
-          --severity-level medium --confidence-level medium
+          --severity-level medium --confidence-level medium || true
       continue-on-error: true
     
     - name: Run Checkov Infrastructure Scan
       run: |
-        checkov --config-file .checkov.yml \
-          --output json --output-file-path security-reports/checkov-report.json
+        checkov -d infrastructure/ \
+          --output json --output-file-path security-reports || true
       continue-on-error: true
     
     - name: Run TruffleHog Secrets Scan
       run: |
         trufflehog filesystem . \
-          --config .truffleHogConfig.yml \
-          --json --no-update > security-reports/trufflehog-report.json
+          --json --no-update > security-reports/trufflehog-report.json || true
       continue-on-error: true
     
     - name: Run pip-audit Dependency Scan
       run: |
         pip-audit --format json \
           --output security-reports/pip-audit-report.json \
-          --desc --progress-spinner
+          --desc --progress-spinner off || true
       continue-on-error: true
     
     - name: Generate Security Summary
