@@ -101,7 +101,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip3 install --break-system-packages --ignore-installed -r requirements.txt
           pip install pytest pytest-cov pytest-xdist
 
       - name: Set up test environment
