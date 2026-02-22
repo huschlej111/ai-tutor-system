@@ -73,6 +73,21 @@ jobs:
       run: python scripts/security_scan.py
       continue-on-error: true
     
+    - name: Show Security Reports
+      if: always()
+      run: |
+        echo "=== Bandit Report ==="
+        cat security-reports/bandit-report.json || echo "No Bandit report found"
+        echo ""
+        echo "=== Checkov Report ==="
+        cat security-reports/results_json.json || echo "No Checkov report found"
+        echo ""
+        echo "=== TruffleHog Report ==="
+        cat security-reports/trufflehog-report.json || echo "No TruffleHog report found"
+        echo ""
+        echo "=== pip-audit Report ==="
+        cat security-reports/pip-audit-report.json || echo "No pip-audit report found"
+    
     - name: Upload Security Reports
       # Note: actions/upload-artifact@v4 not supported in Gitea Actions
       # Reports are generated in security-reports/ directory
