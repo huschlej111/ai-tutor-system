@@ -106,7 +106,8 @@ jobs:
 
       - name: Set up test environment
         run: |
-          export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
+          apt-get install -y postgresql-client
+          export DATABASE_URL="postgresql://testuser:testpassword@localhost:5433/tutor_system_test"
           export ENVIRONMENT="test"
 
       - name: Run database migrations
