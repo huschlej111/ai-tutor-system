@@ -50,16 +50,7 @@ class BackendStack(Stack):
         self.shared_layer = _lambda.LayerVersion(
             self,
             "SharedUtilitiesLayer",
-            code=_lambda.Code.from_asset(
-                "lambda_layer",
-                bundling=cdk.BundlingOptions(
-                    image=_lambda.Runtime.PYTHON_3_12.bundling_image,
-                    command=[
-                        "bash", "-c",
-                        "pip install -r requirements.txt -t /asset-output/python"
-                    ]
-                )
-            ),
+            code=_lambda.Code.from_asset("lambda_layer"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
             description="Shared utilities for authentication and security"
         )
