@@ -394,11 +394,6 @@ class BackendStack(Stack):
             authorizer=authorizer,
             authorization_type=apigateway.AuthorizationType.COGNITO
         )
-        quiz_start.add_cors_preflight(
-            allow_origins=["https://d3awlgby2429wc.cloudfront.net"],
-            allow_methods=["POST", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization"]
-        )
         
         # POST /quiz/answer - Submit answer for current question
         quiz_answer = quiz_resource.add_resource("answer")
@@ -408,11 +403,6 @@ class BackendStack(Stack):
             authorizer=authorizer,
             authorization_type=apigateway.AuthorizationType.COGNITO
         )
-        quiz_answer.add_cors_preflight(
-            allow_origins=["https://d3awlgby2429wc.cloudfront.net"],
-            allow_methods=["POST", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization"]
-        )
         
         # GET /quiz/question - Get next question
         quiz_question = quiz_resource.add_resource("question")
@@ -421,11 +411,6 @@ class BackendStack(Stack):
             apigateway.LambdaIntegration(self.quiz_engine_lambda),
             authorizer=authorizer,
             authorization_type=apigateway.AuthorizationType.COGNITO
-        )
-        quiz_question.add_cors_preflight(
-            allow_origins=["https://d3awlgby2429wc.cloudfront.net"],
-            allow_methods=["GET", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization"]
         )
         
         # POST /quiz/evaluate - Direct answer evaluation (for testing)
