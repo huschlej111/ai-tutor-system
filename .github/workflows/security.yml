@@ -33,7 +33,6 @@ jobs:
     
     - name: Install dependencies
       run: |
-        python -m pip install --break-system-packages --upgrade pip
         pip install --break-system-packages -r requirements.txt
         pip install --break-system-packages bandit checkov pip-audit
     
