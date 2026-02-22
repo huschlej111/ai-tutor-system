@@ -3,6 +3,9 @@ Backend Stack for Know-It-All Tutor System
 Contains Lambda functions and API Gateway
 """
 import json
+import subprocess
+import shutil
+from pathlib import Path
 import aws_cdk as cdk
 from aws_cdk import (
     Stack,
@@ -16,6 +19,42 @@ from aws_cdk import (
     CfnOutput
 )
 from constructs import Construct
+
+
+class LocalBundler(cdk.ILocalBundling):
+    """Local bundling for Lambda functions - avoids Docker-in-Docker issues"""
+    
+    def __init__(self, source_dir: str):
+        self.source_dir = Path(source_dir)
+    
+    def try_bundle(self, output_dir: str, options: cdk.BundlingOptions) -> bool:
+        """
+        Try to bundle locally using pip install on the host.
+        Returns True if successful, False to fall back to Docker.
+        """
+        try:
+            # Install dependencies
+            subprocess.run(
+                ["pip3", "install", "-r", str(self.source_dir / "requirements.txt"), "-t", output_dir],
+                check=True,
+                capture_output=True
+            )
+            
+            # Copy handler
+            shutil.copy2(self.source_dir / "handler.py", output_dir)
+            
+            # Copy migrations if they exist
+            migrations_src = self.source_dir / "migrations"
+            if migrations_src.exists():
+                migrations_dest = Path(output_dir) / "opt" / "migrations"
+                migrations_dest.mkdir(parents=True, exist_ok=True)
+                for sql_file in migrations_src.glob("*.sql"):
+                    shutil.copy2(sql_file, migrations_dest)
+            
+            return True
+        except Exception as e:
+            print(f"Local bundling failed: {e}")
+            return False
 
 
 class BackendStack(Stack):
@@ -84,19 +123,7 @@ class BackendStack(Stack):
             "MigrationRunnerFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=_lambda.Code.from_asset(
-                "../src/lambda_functions/migration_runner",
-                bundling=cdk.BundlingOptions(
-                    image=_lambda.Runtime.PYTHON_3_12.bundling_image,
-                    command=[
-                        "bash", "-c",
-                        "pip install -r requirements.txt -t /asset-output && "
-                        "cp handler.py /asset-output/ && "
-                        "mkdir -p /asset-output/opt/migrations && "
-                        "cp migrations/*.sql /asset-output/opt/migrations/ 2>/dev/null || true"
-                    ]
-                )
-            ),
+            code=_lambda.Code.from_asset("../src/lambda_functions/migration_runner"),
             timeout=Duration.seconds(300),  # 5 minutes for migrations
             memory_size=512,
             layers=[self.shared_layer],
