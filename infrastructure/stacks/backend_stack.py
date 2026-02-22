@@ -56,8 +56,7 @@ class BackendStack(Stack):
                     image=_lambda.Runtime.PYTHON_3_12.bundling_image,
                     command=[
                         "bash", "-c",
-                        "pip install -r requirements.txt -t /asset-output/python && "
-                        "cp -r python/* /asset-output/python/"
+                        "pip install -r requirements.txt -t /asset-output/python"
                     ]
                 )
             ),
