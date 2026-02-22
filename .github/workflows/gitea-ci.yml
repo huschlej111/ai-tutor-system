@@ -25,7 +25,7 @@ jobs:
 
       - name: Install security tools
         run: |
-          pip3 install --break-system-packages bandit checkov pip-audit
+          pip3 install --break-system-packages --ignore-installed bandit checkov pip-audit
           curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Create security reports directory
@@ -88,7 +88,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
         ports:
-          - 5432:5432
+          - 5433:5432
 
     steps:
       - name: Checkout code
@@ -111,12 +111,12 @@ jobs:
 
       - name: Run database migrations
         run: |
-          export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
+          export DATABASE_URL="postgresql://testuser:testpassword@localhost:5433/tutor_system_test"
           psql $DATABASE_URL -f src/lambda_functions/migration_runner/migrations/schema_v2.sql
 
       - name: Run backend tests
         run: |
-          export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
+          export DATABASE_URL="postgresql://testuser:testpassword@localhost:5433/tutor_system_test"
           export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
           pytest tests/ -v --cov=src --cov-report=term-missing
 
