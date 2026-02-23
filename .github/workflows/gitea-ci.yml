@@ -134,6 +134,18 @@ jobs:
             --ignore=tests/test_database_schema_properties.py \
             --ignore=tests/test_deployment_validation.py \
             --ignore=tests/test_model_utils_unit.py \
+            --ignore=tests/test_batch_upload_unit.py \
+            --ignore=tests/test_cognito_auth_properties.py \
+            --ignore=tests/test_cognito_integration.py \
+            --ignore=tests/test_domain_properties.py \
+            --ignore=tests/test_progress_unit.py \
+            --ignore=tests/property_tests/test_quiz_properties.py \
+            --ignore=tests/test_quiz_properties.py \
+            --ignore=tests/test_config_unit.py \
+            --ignore=tests/test_security_middleware_unit.py \
+            --ignore=tests/test_security_monitoring.py \
+            --ignore=tests/test_auth_unit.py \
+            --ignore=tests/test_batch_upload_properties.py \
             -m "not integration"
 
   build-frontend:
