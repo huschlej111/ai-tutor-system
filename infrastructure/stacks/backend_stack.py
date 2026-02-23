@@ -285,16 +285,22 @@ class BackendStack(Stack):
             self,
             "AnswerEvaluatorFunction",
             code=_lambda.DockerImageCode.from_image_asset(
-                "..",  # Build from project root
+                "..",  # Build from project root (needed for final_similarity_model/)
                 file="lambda/answer-evaluator/Dockerfile",
                 exclude=[
                     "infrastructure/cdk.out",
+                    "infrastructure/.venv",
                     "frontend/node_modules",
                     "frontend/dist",
                     ".git",
-                    "venv",
-                    "__pycache__",
-                    "*.pyc"
+                    ".ci-venv",
+                    "**/__pycache__",
+                    "**/*.pyc",
+                    "src",
+                    "tests",
+                    "artifacts",
+                    ".kiro",
+                    "scripts",
                 ]
             ),
             timeout=Duration.seconds(60),

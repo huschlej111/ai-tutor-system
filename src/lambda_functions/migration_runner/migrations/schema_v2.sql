@@ -142,17 +142,21 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Add constraints for data validation
+ALTER TABLE tree_nodes DROP CONSTRAINT IF EXISTS check_domain_data;
 ALTER TABLE tree_nodes ADD CONSTRAINT check_domain_data 
     CHECK (node_type != 'domain' OR validate_domain_data(data));
 
+ALTER TABLE tree_nodes DROP CONSTRAINT IF EXISTS check_term_data;
 ALTER TABLE tree_nodes ADD CONSTRAINT check_term_data 
     CHECK (node_type != 'term' OR validate_term_data(data));
 
 -- Add constraint to ensure domains have no parent
+ALTER TABLE tree_nodes DROP CONSTRAINT IF EXISTS check_domain_no_parent;
 ALTER TABLE tree_nodes ADD CONSTRAINT check_domain_no_parent 
     CHECK (node_type != 'domain' OR parent_id IS NULL);
 
 -- Add constraint to ensure terms have a parent (domain or category)
+ALTER TABLE tree_nodes DROP CONSTRAINT IF EXISTS check_term_has_parent;
 ALTER TABLE tree_nodes ADD CONSTRAINT check_term_has_parent 
     CHECK (node_type != 'term' OR parent_id IS NOT NULL);
 
