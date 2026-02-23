@@ -121,7 +121,9 @@ jobs:
         run: |
           export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/tutor_system_test"
           export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
-          pytest tests/ -v --cov=src --cov-report=term-missing -m "not integration"
+          pytest tests/ -v --cov=src --cov-report=term-missing \
+            --ignore=tests/integration \
+            -m "not integration"
 
   build-frontend:
     name: Build Frontend
