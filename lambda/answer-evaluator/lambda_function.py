@@ -1,199 +1,77 @@
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 import json
+import os
+import numpy as np
+import onnxruntime as ort
+from transformers import AutoTokenizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Load model once (outside handler for reuse across invocations)
-model = None
+MODEL_PATH = os.environ.get('MODEL_PATH', '/opt/ml/model')
 
-def load_model():
-    global model
-    if model is None:
-        print("Loading model...")
-        model = SentenceTransformer('/opt/ml/model/')
-        print("Model loaded successfully")
-    return model
+# Loaded once per container
+_session = None
+_tokenizer = None
+
+def _load():
+    global _session, _tokenizer
+    if _session is None:
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        _session = ort.InferenceSession(os.path.join(MODEL_PATH, 'model.onnx'), sess_options=opts)
+        _tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+
+def _encode(texts):
+    _load()
+    enc = _tokenizer(texts, padding=True, truncation=True, max_length=128, return_tensors="np")
+    outputs = _session.run(None, {
+        "input_ids": enc["input_ids"].astype(np.int64),
+        "attention_mask": enc["attention_mask"].astype(np.int64),
+    })
+    mask = enc["attention_mask"][:, :, np.newaxis].astype(np.float32)
+    pooled = (outputs[0] * mask).sum(axis=1) / mask.sum(axis=1).clip(min=1e-9)
+    norms = np.linalg.norm(pooled, axis=1, keepdims=True).clip(min=1e-9)
+    return pooled / norms
+
+def _similarity(a, b):
+    emb = _encode([a, b])
+    return float(np.clip(cosine_similarity(emb[0:1], emb[1:2])[0][0], 0.0, 1.0))
+
+def _feedback(score):
+    if score >= 0.85: return "Excellent! Your answer matches the expected response."
+    if score >= 0.70: return "Good answer, but could be more precise."
+    if score >= 0.50: return "Partially correct. Review the key concepts."
+    return "Incorrect. Please review the material."
 
 def handler(event, context):
-    """
-    Evaluate semantic similarity between student answer and correct answer
-    Supports single evaluation, batch evaluation, and health check
-    
-    Routes:
-    - POST /quiz/evaluate - Single answer evaluation
-    - POST /quiz/evaluate/batch - Batch answer evaluation
-    - GET /quiz/evaluate/health - Health check
-    """
     try:
-        # Determine route from path
-        http_method = event.get('httpMethod', 'POST')
         path = event.get('path', '')
-        
-        # Health check endpoint
-        if http_method == 'GET' and '/health' in path:
-            return handle_health_check()
-        
-        # Parse input (handle both API Gateway and direct invocation)
-        body = event
-        if 'body' in event:
-            if isinstance(event['body'], str) and event['body']:
-                body = json.loads(event['body'])
-            elif event['body']:
-                body = event['body']
-        
-        # Batch evaluation endpoint
+        method = event.get('httpMethod', 'POST')
+
+        if method == 'GET' and '/health' in path:
+            _load()
+            return {'statusCode': 200, 'body': json.dumps({'status': 'healthy'})}
+
+        body = event.get('body', event)
+        if isinstance(body, str):
+            body = json.loads(body)
+
         if '/batch' in path or body.get('batch'):
-            return handle_batch_evaluation(body)
-        
-        # Single evaluation (default)
-        return handle_single_evaluation(body)
-    
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': str(e)})
-        }
+            pairs = body.get('answer_pairs', [])
+            results = []
+            for p in pairs:
+                score = _similarity(p['answer'], p['correct_answer'])
+                results.append({'similarity': round(score, 4), 'feedback': _feedback(score)})
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                'body': json.dumps({'results': results})
+            }
 
-
-def handle_health_check():
-    """Health check endpoint - verifies model is loaded"""
-    try:
-        model = load_model()
+        score = _similarity(body['answer'], body['correct_answer'])
         return {
             'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({
-                'status': 'healthy',
-                'model_loaded': model is not None,
-                'message': 'Answer Evaluator is ready'
-            })
+            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+            'body': json.dumps({'similarity': round(score, 4), 'feedback': _feedback(score)})
         }
+
     except Exception as e:
-        return {
-            'statusCode': 503,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({
-                'status': 'unhealthy',
-                'error': str(e)
-            })
-        }
-
-
-def handle_single_evaluation(body):
-    """Handle single answer evaluation"""
-    answer = body.get('answer', '').strip()
-    correct_answer = body.get('correct_answer', '').strip()
-    
-    if not answer or not correct_answer:
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'error': 'Both answer and correct_answer are required'})
-        }
-    
-    # Load model
-    model = load_model()
-    
-    # Generate embeddings
-    embeddings = model.encode([answer, correct_answer])
-    
-    # Calculate similarity
-    similarity = float(cosine_similarity([embeddings[0]], [embeddings[1]])[0][0])
-    
-    # Generate feedback based on similarity score
-    if similarity >= 0.85:
-        feedback = "Excellent! Your answer matches the expected response."
-    elif similarity >= 0.70:
-        feedback = "Good answer, but could be more precise."
-    elif similarity >= 0.50:
-        feedback = "Partially correct. Review the key concepts."
-    else:
-        feedback = "Incorrect. Please review the material."
-    
-    return {
-        'statusCode': 200,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-        },
-        'body': json.dumps({
-            'similarity': round(similarity, 4),
-            'feedback': feedback
-        })
-    }
-
-
-def handle_batch_evaluation(body):
-    """Handle batch answer evaluation"""
-    answer_pairs = body.get('answer_pairs', [])
-    
-    if not answer_pairs or not isinstance(answer_pairs, list):
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'error': 'answer_pairs array is required'})
-        }
-    
-    # Validate input
-    for i, pair in enumerate(answer_pairs):
-        if not isinstance(pair, dict) or 'answer' not in pair or 'correct_answer' not in pair:
-            return {
-                'statusCode': 400,
-                'body': json.dumps({'error': f'Invalid answer pair at index {i}'})
-            }
-    
-    # Load model
-    model = load_model()
-    
-    # Process all pairs
-    results = []
-    for pair in answer_pairs:
-        answer = pair['answer'].strip()
-        correct_answer = pair['correct_answer'].strip()
-        
-        if not answer or not correct_answer:
-            results.append({
-                'similarity': 0.0,
-                'feedback': 'Empty answer or correct_answer',
-                'error': True
-            })
-            continue
-        
-        # Generate embeddings
-        embeddings = model.encode([answer, correct_answer])
-        
-        # Calculate similarity
-        similarity = float(cosine_similarity([embeddings[0]], [embeddings[1]])[0][0])
-        
-        # Generate feedback
-        if similarity >= 0.85:
-            feedback = "Excellent! Your answer matches the expected response."
-        elif similarity >= 0.70:
-            feedback = "Good answer, but could be more precise."
-        elif similarity >= 0.50:
-            feedback = "Partially correct. Review the key concepts."
-        else:
-            feedback = "Incorrect. Please review the material."
-        
-        results.append({
-            'similarity': round(similarity, 4),
-            'feedback': feedback,
-            'error': False
-        })
-    
-    return {
-        'statusCode': 200,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-        },
-        'body': json.dumps({
-            'results': results,
-            'total_evaluated': len(results)
-        })
-    }
-
+        return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
