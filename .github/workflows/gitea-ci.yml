@@ -110,12 +110,12 @@ jobs:
 
       - name: Run database migrations
         run: |
-          export DATABASE_URL="postgresql://testuser:testpassword@localhost:5433/tutor_system_test"
+          export DATABASE_URL="postgresql://testuser:testpassword@postgres:5432/tutor_system_test"
           psql $DATABASE_URL -f src/lambda_functions/migration_runner/migrations/schema_v2.sql
 
       - name: Run backend tests
         run: |
-          export DATABASE_URL="postgresql://testuser:testpassword@localhost:5433/tutor_system_test"
+          export DATABASE_URL="postgresql://testuser:testpassword@postgres:5432/tutor_system_test"
           export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
           pytest tests/ -v --cov=src --cov-report=term-missing
 
