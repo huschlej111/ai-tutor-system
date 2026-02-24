@@ -188,7 +188,8 @@ class BackendStack(Stack):
                 "USER_POOL_ID": self.user_pool.user_pool_id,
                 "USER_POOL_CLIENT_ID": self.user_pool_client.user_pool_client_id,
                 "STAGE": "prod",
-                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name
+                "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "AWS_CA_BUNDLE": "/etc/pki/tls/certs/ca-bundle.crt",
             },
             description="Auth Lambda - handles Cognito, invokes DB proxy"
         )
@@ -207,6 +208,7 @@ class BackendStack(Stack):
             layers=[self.shared_layer],
             environment={
                 "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "AWS_CA_BUNDLE": "/etc/pki/tls/certs/ca-bundle.crt",
             },
             description="User profile management"
         )
@@ -224,6 +226,7 @@ class BackendStack(Stack):
             layers=[self.shared_layer],
             environment={
                 "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "AWS_CA_BUNDLE": "/etc/pki/tls/certs/ca-bundle.crt",
             },
             description="Domain management operations"
         )
@@ -241,6 +244,7 @@ class BackendStack(Stack):
             layers=[self.shared_layer],
             environment={
                 "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "AWS_CA_BUNDLE": "/etc/pki/tls/certs/ca-bundle.crt",
             },
             description="Progress tracking operations"
         )
@@ -258,6 +262,7 @@ class BackendStack(Stack):
             layers=[self.shared_layer],
             environment={
                 "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "AWS_CA_BUNDLE": "/etc/pki/tls/certs/ca-bundle.crt",
             },
             description="Batch upload validation and processing"
         )
@@ -275,6 +280,7 @@ class BackendStack(Stack):
             layers=[self.shared_layer],
             environment={
                 "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "AWS_CA_BUNDLE": "/etc/pki/tls/certs/ca-bundle.crt",
             },
             description="Quiz engine - manages quiz sessions"
         )
@@ -307,6 +313,7 @@ class BackendStack(Stack):
             memory_size=2048,
             environment={
                 "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "AWS_CA_BUNDLE": "/etc/pki/tls/certs/ca-bundle.crt",
             },
             description="Answer evaluator with ML model"
         )
@@ -485,6 +492,7 @@ class BackendStack(Stack):
             layers=[self.shared_layer],
             environment={
                 "DB_PROXY_FUNCTION_NAME": self.db_proxy_lambda.function_name,
+                "AWS_CA_BUNDLE": "/etc/pki/tls/certs/ca-bundle.crt",
             },
             description="Cognito Post-Confirmation trigger - creates user in database"
         )
