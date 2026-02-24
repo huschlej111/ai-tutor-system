@@ -182,9 +182,9 @@ jobs:
 
       - name: Build frontend for CDK asset
         env:
-          VITE_API_URL: https://api.example.com
-          VITE_USER_POOL_ID: us-east-1_EXAMPLE
-          VITE_USER_POOL_CLIENT_ID: example123
+          VITE_API_URL: https://3kuv3v3u89.execute-api.us-east-1.amazonaws.com/prod
+          VITE_USER_POOL_ID: us-east-1_Bg1FA4097
+          VITE_USER_POOL_CLIENT_ID: 6d56bp4dfiu42chkdjjmln6bb9
           VITE_NODE_ENV: production
         run: |
           cd frontend
