@@ -135,7 +135,7 @@ class BackendStack(Stack):
             environment={
                 "DB_SECRET_ARN": self.db_credentials.secret_arn,
                 "DB_NAME": "tutor_system",
-                "MIGRATIONS_DIR": "/opt/migrations"
+                "MIGRATIONS_DIR": "/var/task/opt/migrations"
             },
             description="Database migration runner - applies schema migrations"
         )

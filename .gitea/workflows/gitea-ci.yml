@@ -240,6 +240,15 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: us-east-1
 
+      - name: Run database migrations
+        run: |
+          aws lambda invoke --function-name BackendStack-dev-MigrationRunnerFunction2F9B9A8B-4WhuBkExC6sf /tmp/migration-output.json
+          cat /tmp/migration-output.json
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+
   notify:
     name: Notify Results
     runs-on: ubuntu-latest
