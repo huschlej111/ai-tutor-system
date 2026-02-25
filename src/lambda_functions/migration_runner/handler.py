@@ -1,6 +1,7 @@
 """
 Database Migration Runner Lambda
 Automatically applies pending migrations during deployment
+# v2 - includes progress_records fix
 """
 import json
 import os
