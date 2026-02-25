@@ -11,7 +11,7 @@ docker build -t lambda-layer-builder .
 # Create a container and copy the built layer
 docker create --name temp-layer lambda-layer-builder
 rm -rf ./python
-docker cp temp-layer:/asset/ ./
+docker cp temp-layer:/asset/python ./python
 docker rm temp-layer
 
 echo "✅ Lambda layer built successfully in ./python/"
