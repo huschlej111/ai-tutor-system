@@ -1,7 +1,7 @@
 """
 Database Migration Runner Lambda
 Automatically applies pending migrations during deployment
-# v2 - includes progress_records fix
+# v3 - includes progress_records fix - force CDK asset update
 """
 import json
 import os
