@@ -89,7 +89,7 @@ class BackendStack(Stack):
         self.shared_layer = _lambda.LayerVersion(
             self,
             "SharedUtilitiesLayer",
-            code=_lambda.Code.from_asset("lambda_layer"),
+            code=_lambda.Code.from_asset("lambda_layer/python"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
             description="Shared utilities for authentication and security"
         )
