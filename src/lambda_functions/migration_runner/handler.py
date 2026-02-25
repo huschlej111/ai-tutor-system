@@ -11,7 +11,7 @@ import sys
 
 # Add shared layer to path
 sys.path.insert(0, '/opt/python')
-from database import execute_query, execute_query_one, get_connection
+from database import execute_query, execute_query_one, get_db_connection
 
 def get_migration_files() -> List[Tuple[str, str, str]]:
     """
