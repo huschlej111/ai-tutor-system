@@ -2,16 +2,38 @@
 -- Allows admin-uploaded domains to be shared with all users
 -- Date: 2026-02-19
 
--- Add is_public column to tree_nodes
-ALTER TABLE tree_nodes 
-ADD COLUMN is_public BOOLEAN DEFAULT false NOT NULL;
+-- Add is_public column to tree_nodes (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'tree_nodes' AND column_name = 'is_public'
+    ) THEN
+        ALTER TABLE tree_nodes 
+        ADD COLUMN is_public BOOLEAN DEFAULT false NOT NULL;
+    END IF;
+END $$;
 
--- Create index for efficient public domain queries
-CREATE INDEX idx_tree_nodes_public ON tree_nodes(is_public) 
-WHERE is_public = true;
+-- Create index for efficient public domain queries (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE indexname = 'idx_tree_nodes_public'
+    ) THEN
+        CREATE INDEX idx_tree_nodes_public ON tree_nodes(is_public) 
+        WHERE is_public = true;
+    END IF;
+END $$;
 
--- Create composite index for domain queries (user's own + public)
-CREATE INDEX idx_tree_nodes_domain_access ON tree_nodes(node_type, user_id, is_public);
+-- Create composite index for domain queries (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE indexname = 'idx_tree_nodes_domain_access'
+    ) THEN
+        CREATE INDEX idx_tree_nodes_domain_access ON tree_nodes(node_type, user_id, is_public);
+    END IF;
+END $$;
 
 -- Mark existing admin-uploaded domains as public
 -- (Assumes admin user is in 'admin' Cognito group)
