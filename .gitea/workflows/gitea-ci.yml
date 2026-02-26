@@ -249,6 +249,17 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: us-east-1
 
+      - name: Prune old ECR images
+        run: |
+          for repo in answer-evaluator answer-evaluator-inference cdk-hnb659fds-container-assets-257949588978-us-east-1; do
+            aws ecr put-lifecycle-policy --repository-name $repo \
+              --lifecycle-policy-text '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}'
+          done
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+
   notify:
     name: Notify Results
     runs-on: ubuntu-latest
