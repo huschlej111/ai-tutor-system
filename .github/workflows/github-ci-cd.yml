@@ -96,10 +96,10 @@ jobs:
 
       - name: Build frontend
         env:
-          VITE_API_URL: https://api.example.com
-          VITE_USER_POOL_ID: us-east-1_EXAMPLE
-          VITE_USER_POOL_CLIENT_ID: example123
-          VITE_NODE_ENV: production
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_COGNITO_USER_POOL_ID: ${{ secrets.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_USER_POOL_CLIENT_ID: ${{ secrets.VITE_COGNITO_USER_POOL_CLIENT_ID }}
+          VITE_AWS_REGION: us-east-1
         run: |
           cd frontend
           npm ci
@@ -169,6 +169,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -187,6 +189,17 @@ jobs:
         run: |
           cd infrastructure
           pip install -r requirements.txt
+
+      - name: Build frontend for CDK asset
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_COGNITO_USER_POOL_ID: ${{ secrets.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_USER_POOL_CLIENT_ID: ${{ secrets.VITE_COGNITO_USER_POOL_CLIENT_ID }}
+          VITE_AWS_REGION: us-east-1
+        run: |
+          cd frontend
+          npm ci
+          npm run build
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

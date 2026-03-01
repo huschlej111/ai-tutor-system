@@ -166,9 +166,9 @@ jobs:
 
       - name: Build frontend
         env:
-          VITE_API_BASE_URL: https://3kuv3v3u89.execute-api.us-east-1.amazonaws.com/prod
-          VITE_COGNITO_USER_POOL_ID: us-east-1_Bg1FA4097
-          VITE_COGNITO_USER_POOL_CLIENT_ID: 6d56bp4dfiu42chkdjjmln6bb9
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_COGNITO_USER_POOL_ID: ${{ secrets.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_USER_POOL_CLIENT_ID: ${{ secrets.VITE_COGNITO_USER_POOL_CLIENT_ID }}
           VITE_AWS_REGION: us-east-1
         run: |
           cd frontend
@@ -183,12 +183,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Build frontend for CDK asset
         env:
-          VITE_API_BASE_URL: https://3kuv3v3u89.execute-api.us-east-1.amazonaws.com/prod
-          VITE_COGNITO_USER_POOL_ID: us-east-1_Bg1FA4097
-          VITE_COGNITO_USER_POOL_CLIENT_ID: 6d56bp4dfiu42chkdjjmln6bb9
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_COGNITO_USER_POOL_ID: ${{ secrets.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_USER_POOL_CLIENT_ID: ${{ secrets.VITE_COGNITO_USER_POOL_CLIENT_ID }}
           VITE_AWS_REGION: us-east-1
         run: |
           cd frontend
@@ -196,15 +198,13 @@ jobs:
           npm run build
 
       - name: Verify AWS secrets are configured
-        # If this step fails, add secrets at:
-        # http://192.168.1.103:3000/jumbob/ai-tutor-system/settings/secrets
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
             echo "ERROR: AWS_ACCESS_KEY_ID and/or AWS_SECRET_ACCESS_KEY are not set."
-            echo "Add them at: http://192.168.1.103:3000/jumbob/ai-tutor-system/settings/secrets"
+            echo "Add them in your repository secrets settings."
             exit 1
           fi
           echo "AWS credentials are present."
@@ -249,12 +249,11 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: us-east-1
 
-      - name: Prune old ECR images
+      - name: Ensure ECR lifecycle policy
         run: |
-          for repo in answer-evaluator answer-evaluator-inference cdk-hnb659fds-container-assets-257949588978-us-east-1; do
-            aws ecr put-lifecycle-policy --repository-name $repo \
-              --lifecycle-policy-text '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}'
-          done
+          aws ecr put-lifecycle-policy \
+            --repository-name cdk-hnb659fds-container-assets-257949588978-us-east-1 \
+            --lifecycle-policy-text '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
