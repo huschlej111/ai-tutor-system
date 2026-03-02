@@ -129,7 +129,6 @@ jobs:
             --ignore=tests/integration \
             --ignore=tests/test_localstack_integration.py \
             --ignore=tests/test_secrets_integration.py \
-            --ignore=tests/test_kms_secrets.py \
             --ignore=tests/test_domain_unit.py \
             --ignore=tests/test_quiz_unit.py \
             --ignore=tests/test_auth_properties.py \
@@ -138,7 +137,6 @@ jobs:
             --ignore=tests/test_progress_properties.py \
             --ignore=tests/test_database_schema_properties.py \
             --ignore=tests/test_deployment_validation.py \
-            --ignore=tests/test_model_utils_unit.py \
             --ignore=tests/test_batch_upload_unit.py \
             --ignore=tests/test_cognito_auth_properties.py \
             --ignore=tests/test_cognito_integration.py \
