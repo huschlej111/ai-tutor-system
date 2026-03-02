@@ -65,17 +65,6 @@ class NetworkStack(Stack):
             description="Allow Lambda to access RDS PostgreSQL"
         )
         
-        # VPC Endpoint for Secrets Manager (Free Tier - no NAT Gateway needed)
-        self.secrets_endpoint = ec2.InterfaceVpcEndpoint(
-            self,
-            "SecretsManagerEndpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
-            private_dns_enabled=True,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
-            security_groups=[self.lambda_security_group]
-        )
-        
         # VPC Endpoint for S3 (Gateway endpoint - free)
         self.s3_endpoint = ec2.GatewayVpcEndpoint(
             self,

@@ -30,6 +30,15 @@ class DatabaseManager:
     def _get_db_config(self) -> Dict[str, str]:
         """Get database configuration from Secrets Manager (KMS encrypted) or LocalStack RDS"""
         if self.db_config is None:
+            if os.environ.get('DB_PASSWORD'):
+                self.db_config = {
+                    'host': os.environ.get('DB_HOST', 'localhost'),
+                    'port': os.environ.get('DB_PORT', '5432'),
+                    'database': os.environ.get('DB_NAME', 'tutor_system'),
+                    'user': os.environ.get('DB_USER', 'tutor_user'),
+                    'password': os.environ.get('DB_PASSWORD')
+                }
+                return self.db_config
             try:
                 # Check if running in LocalStack environment
                 is_localstack = os.environ.get('LOCALSTACK_ENDPOINT') is not None

@@ -110,12 +110,14 @@ class BackendStack(Stack):
             ),
             security_groups=[self.lambda_security_group],
             environment={
-                "DB_SECRET_ARN": self.db_credentials.secret_arn,
-                "DB_NAME": "tutor_system"
+                "DB_HOST": self.database.db_instance_endpoint_address,
+                "DB_PORT": "5432",
+                "DB_NAME": "tutor_system",
+                "DB_USER": self.db_credentials.secret_value_from_json("username").unsafe_unwrap(),
+                "DB_PASSWORD": self.db_credentials.secret_value_from_json("password").unsafe_unwrap(),
             },
             description="Database proxy Lambda - handles all DB operations from VPC"
         )
-        self.db_credentials.grant_read(self.db_proxy_lambda)
         
         # Create Migration Runner Lambda (inside VPC)
         self.migration_runner_lambda = _lambda.Function(
@@ -133,13 +135,15 @@ class BackendStack(Stack):
             ),
             security_groups=[self.lambda_security_group],
             environment={
-                "DB_SECRET_ARN": self.db_credentials.secret_arn,
+                "DB_HOST": self.database.db_instance_endpoint_address,
+                "DB_PORT": "5432",
                 "DB_NAME": "tutor_system",
+                "DB_USER": self.db_credentials.secret_value_from_json("username").unsafe_unwrap(),
+                "DB_PASSWORD": self.db_credentials.secret_value_from_json("password").unsafe_unwrap(),
                 "MIGRATIONS_DIR": "/var/task/migrations"
             },
             description="Database migration runner - applies schema migrations"
         )
-        self.db_credentials.grant_read(self.migration_runner_lambda)
         
         # Run migrations on deployment using Custom Resource
         migration_trigger = cr.AwsCustomResource(
