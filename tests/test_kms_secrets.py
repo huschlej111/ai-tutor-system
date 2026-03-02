@@ -1,25 +1,18 @@
 #!/usr/bin/env python3
 """
-Test script to demonstrate KMS + Secrets Manager integration in LocalStack
+Test KMS + Secrets Manager integration using Moto
 """
 import json
 import boto3
 from botocore.exceptions import ClientError
+from moto import mock_aws
 
 
+@mock_aws
 def test_kms_secrets_integration():
-    """Test KMS and Secrets Manager working together in LocalStack"""
-    
-    # Configure clients for LocalStack
-    config = {
-        "endpoint_url": "http://localhost:4566",
-        "aws_access_key_id": "test",
-        "aws_secret_access_key": "test",
-        "region_name": "us-east-1"
-    }
-    
-    kms_client = boto3.client("kms", **config)
-    secrets_client = boto3.client("secretsmanager", **config)
+    """Test KMS and Secrets Manager working together"""
+    kms_client = boto3.client("kms", region_name="us-east-1")
+    secrets_client = boto3.client("secretsmanager", region_name="us-east-1")
     
     print("🔐 Testing KMS + Secrets Manager Integration in LocalStack")
     print("=" * 60)
@@ -140,66 +133,13 @@ def test_kms_secrets_integration():
         )
         print(f"✅ Deleted secret: {secret_name}")
         
-        # Note: In LocalStack, KMS keys are automatically cleaned up when container stops
-        print(f"✅ KMS key will be cleaned up when LocalStack stops")
-        
+        print(f"✅ KMS key cleaned up by Moto")
+
     except Exception as e:
         print(f"❌ Test failed: {e}")
         raise
 
 
-def test_existing_secrets():
-    """Test the secrets created by your setup script"""
-    
-    config = {
-        "endpoint_url": "http://localhost:4566",
-        "aws_access_key_id": "test",
-        "aws_secret_access_key": "test",
-        "region_name": "us-east-1"
-    }
-    
-    secrets_client = boto3.client("secretsmanager", **config)
-    
-    print("\n🔍 Testing existing secrets from setup script...")
-    print("=" * 50)
-    
-    expected_secrets = [
-        "tutor-system/database",
-        "tutor-system/jwt", 
-        "tutor-system/ml-model"
-    ]
-    
-    for secret_name in expected_secrets:
-        try:
-            response = secrets_client.get_secret_value(SecretId=secret_name)
-            secret_data = json.loads(response["SecretString"])
-            
-            print(f"✅ {secret_name}:")
-            for key, value in secret_data.items():
-                if "password" in key.lower() or "secret" in key.lower():
-                    print(f"   {key}: {'*' * len(str(value))}")
-                else:
-                    print(f"   {key}: {value}")
-            
-        except ClientError as e:
-            print(f"❌ Failed to access {secret_name}: {e}")
-
-
 if __name__ == "__main__":
-    print("🚀 Starting KMS + Secrets Manager LocalStack Tests")
-    print("Make sure LocalStack is running: make localstack-start")
-    print()
-    
-    try:
-        test_kms_secrets_integration()
-        test_existing_secrets()
-        
-        print("\n" + "=" * 60)
-        print("🎉 ALL TESTS PASSED!")
-        print("✅ KMS and Secrets Manager are working perfectly in LocalStack")
-        print("✅ Your IAM policies will work correctly")
-        print("✅ Secrets are encrypted and decrypted automatically")
-        
-    except Exception as e:
-        print(f"\n❌ Tests failed: {e}")
-        exit(1)
+    test_kms_secrets_integration()
+    print("All tests passed!")
