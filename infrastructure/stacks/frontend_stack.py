@@ -87,13 +87,13 @@ class FrontendStack(Stack):
         
         # Deploy frontend build to S3
         # Note: Requires frontend/dist to exist (run npm build first)
+        # CloudFront cache invalidation is handled separately in CI via aws cloudfront
+        # create-invalidation to avoid CDK bug https://github.com/aws/aws-cdk/issues/15891
         self.frontend_deployment = s3deploy.BucketDeployment(
             self,
             "DeployFrontend",
             sources=[s3deploy.Source.asset("../frontend/dist")],
             destination_bucket=self.frontend_bucket,
-            distribution=self.distribution,
-            distribution_paths=["/*"],  # Invalidate CloudFront cache on deployment
         )
         
         # CloudFormation Outputs
